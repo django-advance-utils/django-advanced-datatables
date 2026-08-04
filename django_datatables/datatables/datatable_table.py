@@ -321,6 +321,11 @@ class DatatableTable:
             options['data'] = self.get_table_array(request, self.table_data)
         elif not self.ajax_data:
             options['data'] = self.get_table_array(request, self.get_query())
+        elif request is not None:
+            # Pin the draw url to the request that rendered the table. Without it the js falls back
+            # to window.location, so a draw that fires after the browser has navigated posts this
+            # table_id to whatever view it has moved on to.
+            options.setdefault('ajax_url', request.get_full_path())
 
         options['columnDefs'] = [dict({'targets': i, 'name': c.column_name}, **c.style())
                                  for i, c in enumerate(self.columns)]

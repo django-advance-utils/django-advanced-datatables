@@ -91,7 +91,11 @@ class DatatableView(TemplateView):
     def post(self, request, *args, **kwargs):
         if request.POST.get('datatable_data'):
             from django_datatables.datatables.server_side import ServerSideTable
-            table = self.tables[request.POST['table_id']]
+            table = self.tables.get(request.POST['table_id'])
+            if table is None:
+                # A draw for a table this view does not have - the page that requested it has
+                # already been replaced, so there are no rows to return.
+                return HttpResponse('{"data":[]}', content_type='application/json')
             self.setup_tables(table_id=table.table_id)
             results = self.get_table_query(table, **kwargs)
             if isinstance(table, ServerSideTable):

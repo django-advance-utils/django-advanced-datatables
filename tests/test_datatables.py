@@ -756,3 +756,41 @@ class TestWidgetView:
         page.wait_for_selector("table.dataTable", timeout=15000)
         tables = page.locator("table.dataTable").all()
         assert len(tables) >= 2, "Widget page should have multiple DataTable widgets"
+
+
+# ===========================================================================
+# 29. Draw url – a table posts to the page that rendered it
+# ===========================================================================
+
+class TestDrawUrl:
+    """The ajax url is pinned to the rendering request, not read from window.location.
+
+    Without this, an app that swaps page content over ajax (pushState first, content
+    second) makes an in-flight table draw post its table_id to whichever view the
+    browser has moved on to, which the receiving view has no table for.
+    """
+
+    def test_draw_posts_to_the_url_that_rendered_the_table(self, page: Page):
+        page.goto(f"{BASE}/getting-started/first-table")
+        wait_for_datatable(page)
+
+        # move the browser on, as an ajax tab or page switch does
+        page.evaluate("history.pushState(null, '', '/columns/links')")
+
+        with page.expect_request(lambda r: r.method == "POST") as posted:
+            page.evaluate("django_datatables.DataTables['firsttable'].table.api().ajax.reload()")
+
+        assert posted.value.url.endswith("/getting-started/first-table"), (
+            f"draw posted to {posted.value.url}, not the page that rendered the table")
+        assert posted.value.response().status == 200
+
+    def test_unknown_table_id_returns_an_empty_table(self, page: Page):
+        """A stale draw landing on a view without that table must not raise."""
+        page.goto(f"{BASE}/getting-started/first-table")
+        response = page.request.post(
+            f"{BASE}/getting-started/first-table",
+            form={"datatable_data": "true", "table_id": "not_a_table_on_this_view"},
+            headers={"X-CSRFToken": page.evaluate("document.cookie.match(/csrftoken=([^;]+)/)[1]")},
+        )
+        assert response.status == 200
+        assert response.json() == {"data": []}
