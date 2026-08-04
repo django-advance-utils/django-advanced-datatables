@@ -5,6 +5,7 @@ from crispy_forms.bootstrap import StrictButton
 from crispy_forms.layout import HTML
 from django import forms
 from django.conf import settings
+from django.db.models import Count
 from django.utils.safestring import mark_safe
 from django.views.generic import FormView, TemplateView
 from django_menus.menu import MenuItem
@@ -13,8 +14,8 @@ from django_modals.modals import FormModal
 
 from datatable_examples import models
 from datatable_examples.views.base import ManualPage
-from django_datatables.columns import ColumnBase, DatatableColumn
-from django_datatables.datatables import DatatableTable, DatatableView, HorizontalTable
+from django_datatables.columns import ColumnBase, ColumnLink, DatatableColumn
+from django_datatables.datatables import DatatableTable, DatatableView, HorizontalTable, SimpleTable
 from django_datatables.plugins.column_totals import ColumnTotals
 from django_datatables.reorder_datatable import reorder
 from django_datatables.widgets import DataTableReorderWidget, DataTableWidget
@@ -126,6 +127,37 @@ class NoModelData(ManualPage, DatatableView):
             '<code>get_table_query</code>; the right table is embedded in the page by assigning '
             '<code>table.table_data</code> instead. The <i>seconds</i> column is formatted hh:mm by '
             'a custom JavaScript render function loaded with the page.'
+        )}
+
+
+class SimpleTablePage(ManualPage, DatatableView):
+    model = models.Company
+    page_title = 'Simple Table (No JavaScript)'
+    code_examples = ['add_tables', 'setup_table']
+
+    def add_tables(self):
+        # table_class=SimpleTable renders a plain server-side <table> instead of a DataTables.js widget
+        self.add_table(type(self).__name__.lower(), model=self.model, table_class=SimpleTable)
+
+    @staticmethod
+    def setup_table(table):
+        table.add_columns(
+            'id',
+            'name',
+            ColumnBase(column_name='people', field='people', annotations={'people': Count('person__id')}),
+            ColumnLink(column_name='view', link_ref_column='id', url_name='column_visibility'),
+        )
+        table.max_records = 25  # SimpleTable has no client-side paging, so cap rows server-side
+
+    def add_to_context(self, **kwargs):
+        return {'description': (
+            '<code>SimpleTable</code> reuses the same column definitions as a normal datatable but '
+            'renders a plain server-side HTML <code>&lt;table&gt;</code> — no DataTables.js and no AJAX. '
+            'Register it by passing <code>table_class=SimpleTable</code> to <code>add_table</code>; the '
+            'template renders it with the same <code>{{ datatable.render }}</code>. Columns produce their '
+            'HTML server-side (the <i>view</i> column renders as a real link), which suits search-result '
+            'pages and anywhere client-side JS paging/sorting is unwanted. There is no in-browser search '
+            'or paging, so rows are capped with <code>max_records</code>.'
         )}
 
 

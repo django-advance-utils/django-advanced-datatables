@@ -67,6 +67,7 @@ CHAPTERS = (
         PageRef('multiple_tables', 'Multiple Tables'),
         PageRef('horizontal', 'Horizontal Table'),
         PageRef('no_model', 'Table Without a Model'),
+        PageRef('simple_table', 'Simple Table (No JS)'),
         PageRef('form_widgets', 'Form Widgets'),
         PageRef('spreadsheet', 'Spreadsheet'),
     )),
