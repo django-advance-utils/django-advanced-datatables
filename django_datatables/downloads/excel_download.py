@@ -60,21 +60,23 @@ class ExcelDownload:
         excel_styles = []
         titles = []
 
-        for n, c in enumerate(table.columns):
-            if getattr(c, 'xl_dont_show', lambda: False)() or c.options.get('hidden'):
+        for c in table.columns:
+            if c.xl_dont_show() or c.options.get('hidden'):
                 col_format.append(False)
             else:
                 titles.append(str(strip_tags(c.title)))
-                col_format.append(c.excel if hasattr(c, 'excel') else True)
+                col_format.append(c.excel)
                 if hasattr(c, 'xl_style'):
-                    excel_styles.append((n, c.xl_style))
+                    # Index into the written row, not into table.columns - skipped columns
+                    # are dropped from the row, so the two only agree when none are skipped.
+                    excel_styles.append((len(titles) - 1, c.xl_style))
 
         sheet.append(titles)
         if query is None:
             query = table.table_data if table.table_data else self.get_table_query(table)
         results = self.sort_excel(table, table.get_table_array(self.request, query))
         for r in results:
-            row = [Cell(value=(d(v) if d != True else v), worksheet=sheet) for v, d in zip(r, col_format) if d]
+            row = [Cell(value=d(v), worksheet=sheet) for v, d in zip(r, col_format) if d]
             for f in excel_styles:
                 f[1](row[f[0]])
             sheet.append(row)

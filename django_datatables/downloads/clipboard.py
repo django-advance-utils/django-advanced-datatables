@@ -2,6 +2,7 @@ import json
 
 from ajax_helpers.utils import ajax_command
 from django.http import QueryDict
+from django.utils.html import strip_tags
 from django_menus.menu import MenuItem
 
 from django_datatables.helpers import add_filters
@@ -26,16 +27,15 @@ class ClipboardCopy:
                         'Copy to Clipboard', font_awesome='fas fa-copy', link_type=MenuItem.AJAX_COMMAND)
 
     def copy_clipboard(self, table, query=None):
-        excel_function = [count for count, c in enumerate(table.columns) if hasattr(c, 'excel')]
-        rows = ['\t'.join([str(c.title) for c in table.columns if not c.options.get('hidden')])]
+        # Same column selection as the Excel export, so the two stay in step.
+        columns = [(count, c) for count, c in enumerate(table.columns)
+                   if not (c.xl_dont_show() or c.options.get('hidden'))]
+        rows = ['\t'.join([str(strip_tags(c.title)) for _, c in columns])]
         if query is None:
             query = table.table_data if table.table_data else self.get_table_query(table)
         results = self.sort_excel(table, table.get_table_array(self.request, query))
         for r in results:
-            for f in excel_function:
-                r[f] = table.columns[f].excel(r[f])
-            rows.append('\t'.join([str(x) if x else '' for c, x in enumerate(r)
-                   if not table.columns[c].options.get('hidden')]))
+            rows.append('\t'.join([str(x) if x else '' for x in (c.excel(r[count]) for count, c in columns)]))
         self.add_command('clipboard', text='\n'.join(rows))
         return self.command_response('message', text='Table copied to clipboard')
 

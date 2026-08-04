@@ -38,6 +38,12 @@ class ColumnBase:
     # Default so getattr/hasattr are always safe before __init__ assigns them.
     _search_field = None
     search = None
+    edit_type = None
+
+    # Which element of a field_array row_result the Excel / clipboard export should use.
+    # None exports the value as-is; link-style columns whose row_result is [ref, text] set
+    # this to 1 so the export gets the displayed text rather than the row's pk.
+    excel_array_index = None
 
     @staticmethod
     def merge_kwargs_locals(local_vars):
@@ -127,6 +133,8 @@ class ColumnBase:
             field = self.field[self.field.find('__') + 2:]
             choices = list(self.model.objects.values_list('id', field))
             self.field = ['id', field]
+            # row_result is now [id, label] - export the label, not the id.
+            self.excel_array_index = 1
             self.options.update(self.dropdown_edit(choices))
         else:
             self.options['render'] = [render_replace(column=self.column_name, html=EDIT_CELL_HTML)]
@@ -385,13 +393,24 @@ class ColumnBase:
                 self.options[a] = value
         return self
 
-    @staticmethod
-    def excel(value):
+    def excel(self, value):
+        """Convert a row_result value into something openpyxl can write.
+
+        Subclasses whose row_result is not already a plain scalar should override this
+        (and optionally add xl_style) rather than let the value fall through to str().
+        """
+        if self.excel_array_index is not None and isinstance(value, (list, tuple)):
+            index = self.excel_array_index
+            value = value[index] if len(value) > index else None
         if isinstance(value, (int, float, str)):
             return value
         elif value is None:
             return ''
         return str(value)
+
+    def xl_dont_show(self):
+        """Return True to omit this column from the Excel / clipboard export."""
+        return False
 
     def spreadsheet_init(self):
         column_init = {'title': self.title, 'width': self.column_defs.get('width', 100)}

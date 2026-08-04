@@ -13,6 +13,9 @@ from django_datatables.helpers import render_replace, extract_fields
 class ModalLink(ColumnBase):
     """Render the cell as a link (or button) that opens a django-modals modal for the row."""
 
+    # With a list field, row_result is [modal ref, displayed text] - export the text.
+    excel_array_index = 1
+
     def __init__(self, *, modal_name=None, field='id', row_modify=False, base64=False, button_text=None, modal_args=(),
                  css_class=None, row=False, **kwargs):
         if not self.initialise(locals()):
@@ -45,17 +48,14 @@ class ModalLink(ColumnBase):
         if row_modify:
             self.options['render'].append({'function': 'Row', 'var': '%row%'})
 
-    @staticmethod
-    def excel(value):
-        if isinstance(value, list):
-            return value[0]
-
 
 class ColumnLinkCoalesce(DatatableColumn):
     """Modal link whose display text is the first non-null of several ``display_fields``."""
 
     base_link_html = '%1%'
     base_link_css = None
+    # row_result returns [modal ref, displayed text] - export the text.
+    excel_array_index = 1
 
     @property
     def url(self):

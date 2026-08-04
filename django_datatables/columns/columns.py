@@ -44,6 +44,12 @@ class TextFieldColumn(ColumnBase):
         if len(self.args) > 0:
             self.kwargs['max_chars'] = int(self.args[0])
 
+    def excel(self, value):
+        # row_result substitutes <br> for the field's newlines - put them back.
+        if value is None:
+            return ''
+        return str(value).replace('<br>', '\n')
+
 
 class ColumnLink(ColumnBase):
 
@@ -51,6 +57,8 @@ class ColumnLink(ColumnBase):
     base_link_css = None
     # Cell alignment: an ``align`` kwarg wins, else this class default. None leaves it unset.
     default_align = None
+    # With a list field, row_result is [url ref, displayed text] - export the text.
+    excel_array_index = 1
 
     def col_setup(self):
         align = self.kwargs.get('align', self.default_align)
@@ -144,6 +152,8 @@ class ChoiceColumn(ColumnBase):
     def setup_edit(self):
         choices = list(self.choices.items())
         self.options.update(self.dropdown_edit(choices))
+        # edit_row_result returns [value, label] - export the label.
+        self.excel_array_index = 1
         self.row_result = self.edit_row_result
 
     def edit_row_result(self, data, _page_data):
@@ -235,6 +245,10 @@ class MenuColumn(NoHeadingColumn):
                     ('view 2', 'View 2', {'url_kwargs': {'int': DUMMY_ID}})
                 )),
     """
+    def xl_dont_show(self):
+        # The cell is a menu of buttons; its value is only the row's id.
+        return True
+
     def __init__(self, menu, **kwargs):
         column_name = kwargs['column_name']
         menu_rendered = menu.render().replace(str(DUMMY_ID), '%1%').replace(str(DUMMY_ID2), '%2%')
@@ -249,6 +263,10 @@ class MenuColumn(NoHeadingColumn):
 
 
 class SelectColumn(DatatableColumn):
+
+    def xl_dont_show(self):
+        # The cell is a checkbox; its value is only the row's id.
+        return True
 
     def __init__(self, field='id', **kwargs):
         def button(title, font_awesome, data_command=None):
@@ -340,12 +358,11 @@ class AlignColumnLink(ColumnLink):
 
 
 class XlColumnLink(ColumnLink):
-    """ColumnLink whose Excel export uses the display text (second element) of a [ref, text] value."""
+    """Deprecated alias for ColumnLink.
 
-    @staticmethod
-    def excel(value):
-        if isinstance(value, list):
-            return value[1]
+    ColumnLink itself now exports the display text of a [ref, text] value, which is what
+    this subclass was for.
+    """
 
 
 class ViewLink(ColumnLink):

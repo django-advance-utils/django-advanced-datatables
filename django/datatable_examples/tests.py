@@ -5,10 +5,12 @@ from decimal import Decimal
 from io import BytesIO
 from urllib.parse import urlencode
 
+from ajax_helpers.mixins import AjaxHelpers
 from django.contrib.auth.models import AnonymousUser
 from django.db.models import Q
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
+from django_menus.menu import HtmlMenu
 from openpyxl import load_workbook
 
 from datatable_examples.models import Company, Payment, Person, Tags
@@ -20,13 +22,15 @@ from django_datatables.columns import (ColumnLink, DatatableColumn, DateColumn, 
                                        LocaleCurrencyColumn, ExcelDatatableColumn, CurrencyColumn,
                                        CurrencyPenceColumn, MultiCurrencyColumn, ZeroPenceColumn, MonthColumn,
                                        YearMonthColumn, AlignColumnLink, ViewLink, SelectColumn,
-                                       MultiMenuColumnBase, DatatableColumnError)
+                                       MultiMenuColumnBase, DatatableColumnError, ChoiceColumn, MenuColumn,
+                                       TextFieldColumn)
 from django_datatables.columns import JsonBooleanColumn as LibraryJsonBooleanColumn
 from django_datatables.filters import DatatableFilter
 from django_datatables.datatables import DatatableTable, DatatableView
 from django_datatables.datatables.datatable_error import DatatableError
 from django_datatables.filters import PythonPivotFilter
 from django_datatables.datatables.server_side import ServerSideTable
+from django_datatables.downloads.excel_download import ExcelDownload
 from django_datatables.server_side_filters import (ServerDateFilter, ServerPivotFilter, ServerSelect2Filter,
                                                    ServerTagFilter, ServerTotalsFilter, ServerValuesFilter)
 
@@ -56,6 +60,13 @@ def make_data():
 def make_table():
     table = ServerSideTable('serverside', model=Person)
     table.add_columns('id', 'first_name', 'surname', 'company__name', 'title_model', 'date_entered')
+    return table
+
+
+def make_edit_table(*edit_fields):
+    """A table whose edit_fields make a column added to it editable in place."""
+    table = DatatableTable('editing', model=Person)
+    table.edit_fields = list(edit_fields) if edit_fields else ['title']
     return table
 
 
@@ -813,6 +824,63 @@ class TestServerSideExcelDownload(TestCase):
         rows = self.download(**{'order[0][column]': '2', 'order[0][dir]': 'desc'})
         self.assertEqual([r[2] for r in rows[1:]], ['Smith', 'Jones', 'Green', 'Brown'])
 
+    def test_link_column_exports_display_text(self):
+        # person_link (column 3) is a list-field ColumnLink whose row_result is [id, surname];
+        # the export must be the surname, not the repr of the pair.
+        rows = self.download(**{'search[value]': 'Carol'})
+        self.assertEqual(rows[1][3], 'Brown')
+
+
+class ExcelStyleView(ExcelDownload, AjaxHelpers, DatatableView):
+    """A hidden column in front of two styled columns."""
+
+    model = Payment
+    ajax_commands = ['column']
+
+    @staticmethod
+    def setup_table(table):
+        table.add_columns(
+            '.id',  # hidden, so dropped from the export
+            'company__name',
+            CurrencyColumn(column_name='amount', field='amount'),
+            DateColumn(column_name='date', field='date'),
+        )
+
+
+class TestExcelStyles(TestCase):
+    """xl_style must land on the cell its column actually wrote, which is not its index in
+    table.columns once a hidden column has been dropped from the row."""
+
+    def setUp(self):
+        make_data()
+        self.factory = RequestFactory()
+
+    def download(self):
+        data = {'column': 'get_excel', 'table_id': 'excelstyleview',
+                'column_data': json.dumps(list(Payment.objects.values_list('id', flat=True)))}
+        request = self.factory.post('/', json.dumps(data), content_type='application/json',
+                                    HTTP_X_REQUESTED_WITH='XMLHttpRequest', HTTP_USER_AGENT='test')
+        request.user = AnonymousUser()
+        response = ExcelStyleView.as_view()(request)
+        save_file = next(c for c in json.loads(response.content) if c['function'] == 'save_file')
+        return load_workbook(BytesIO(base64.b64decode(save_file['data']))).active
+
+    def test_hidden_column_is_not_exported(self):
+        sheet = self.download()
+        self.assertEqual([c.value for c in sheet[1]], ['Name', 'Amount', 'Date'])
+
+    def test_styles_follow_their_own_column(self):
+        sheet = self.download()
+        for row in sheet.iter_rows(min_row=2):
+            self.assertEqual(row[1].number_format, '#,##0.00_-')
+            self.assertEqual(row[2].number_format, 'dd/mm/yyyy')
+
+    def test_currency_and_date_export_as_values_not_text(self):
+        sheet = self.download()
+        for row in sheet.iter_rows(min_row=2):
+            self.assertIsInstance(row[1].value, (int, float))  # a number, not '100.00'
+            self.assertIsInstance(row[2].value, datetime.date)
+
 
 class TestPortedColumns(TestCase):
     """Unit tests for the columns / helpers consolidated into the library."""
@@ -882,10 +950,73 @@ class TestPortedColumns(TestCase):
         red = Tags.objects.get(tag='Red')
         self.assertEqual(col.excel([red.pk]), 'Red')
 
+    def test_many_to_many_excel_exports_the_blank_text(self):
+        # The blank entry only ever reaches options['lookup'], never lookup_dict.
+        col = ManyToManyColumn(column_name='CompanyTags', field='tags__tag', model=Company, blank='No tags')
+        self.assertEqual(col.excel(col.blank), 'No tags')
+
     def test_filter_column_titles(self):
         table = make_table()
         f = DatatableFilter('pivot', table, columns=['surname', 'first_name'])
         self.assertEqual([t[1] for t in f.column_titles()], ['surname', 'first_name'])
+
+
+class TestColumnExcelValues(TestCase):
+    """Every column's excel() must turn its own row_result into something Excel can hold -
+    no list reprs, no markup, no numbers stranded as text."""
+
+    def setUp(self):
+        make_data()
+
+    def test_link_column_exports_display_text_not_the_ref(self):
+        col, _ = make_link_table().find_column('person_link')
+        self.assertEqual(col.row_result({'id': 7, 'surname': 'Smith'}, {}), [7, 'Smith'])
+        self.assertEqual(col.excel([7, 'Smith']), 'Smith')
+
+    def test_link_column_with_a_scalar_field_is_unaffected(self):
+        col = ColumnLink(column_name='name', field='name', url_name='column_visibility', model=Company)
+        self.assertEqual(col.excel('Acme'), 'Acme')
+
+    def test_choice_column_edit_exports_the_label(self):
+        col = ChoiceColumn(column_name='title', field='title', model=Person,
+                           choices=[(0, 'Mr'), (1, 'Mrs')], table=make_edit_table())
+        self.assertEqual(col.row_result({'title': 0}, {}), [0, 'Mr'])
+        self.assertEqual(col.excel([0, 'Mr']), 'Mr')
+
+    def test_editable_fk_column_exports_the_label(self):
+        # setup_edit rewrites the field to [id, label], so row_result becomes a pair.
+        table = make_edit_table('company__name')
+        table.add_columns('company__name')
+        col, _ = table.find_column('company__name')
+        self.assertEqual(col.edit_type, 'FK')
+        self.assertEqual(col.excel([3, 'Acme']), 'Acme')
+
+    def test_currency_column_exports_a_number(self):
+        col = CurrencyPenceColumn(column_name='amount', field='amount', model=Payment)
+        self.assertEqual(col.excel(col.row_result({'amount': 12345}, {})), 123.45)
+        self.assertEqual(col.excel(None), '')
+
+    def test_locale_currency_column_with_a_list_field(self):
+        # row_result returns (amount, currency) here; float() used to choke on the pair.
+        col = LocaleCurrencyColumn(column_name='amount', field=['amount', 'currency'], model=Payment)
+        self.assertEqual(col.excel(col.row_result({'amount': 12345, 'currency': 'USD'}, {})), 123.45)
+
+    def test_text_field_column_exports_newlines_not_br_tags(self):
+        col = TextFieldColumn(column_name='notes', field='name', model=Company)
+        self.assertEqual(col.row_result({'name': 'one\ntwo'}, {}), 'one<br>two')
+        self.assertEqual(col.excel('one<br>two'), 'one\ntwo')
+        self.assertEqual(col.excel(None), '')
+
+    def test_button_columns_are_not_exported(self):
+        select = SelectColumn(column_name='select', model=Company)
+        self.assertTrue(select.xl_dont_show())
+        menu = MenuColumn(column_name='menu', field='id', model=Company,
+                          menu=HtmlMenu(RequestFactory().get('/'), 'button_group').add_items(
+                              ('column_visibility', 'View')))
+        self.assertTrue(menu.xl_dont_show())
+
+    def test_ordinary_column_is_exported(self):
+        self.assertFalse(DatatableColumn(column_name='name', field='name', model=Company).xl_dont_show())
 
 
 class TestMergedColumns(TestCase):

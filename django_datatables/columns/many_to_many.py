@@ -96,4 +96,6 @@ class ManyToManyColumn(DatatableColumn):
             self.field = data_dict_key
 
     def excel(self, value):
-        return ', '.join(str(self.options['lookup_dict'].get(v, '')) for v in value)
+        # The blank entry is only in options['lookup'] (keyed -1), never in lookup_dict.
+        lookup = self.options['lookup_dict']
+        return ', '.join(str(self._lookup_blank if v == -1 else lookup.get(v, '')) for v in value)

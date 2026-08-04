@@ -22,6 +22,15 @@ class CurrencyColumn(ColumnBase):
         super().setup_kwargs(kwargs)
         self.column_defs['className'] = 'dt-right'
 
+    @staticmethod
+    def excel(value):
+        # row_result formats the value as a string; Excel wants it back as a number.
+        return float(value) if value else ''
+
+    @staticmethod
+    def xl_style(cell):
+        cell.number_format = '#,##0.00_-'
+
 
 class CurrencyPenceColumn(CurrencyColumn):
     """CurrencyColumn for a value stored in pennies."""
@@ -79,8 +88,11 @@ class LocaleCurrencyColumn(ColumnBase):
 
     @staticmethod
     def excel(value):
-        if value:
-            return float(value)
+        # With a list field row_result returns (amount, currency); only the amount can be
+        # written as a number - see MultiCurrencyColumn to keep the per-row currency.
+        if isinstance(value, (list, tuple)):
+            value = value[0]
+        return float(value) if value else ''
 
     @staticmethod
     def xl_style(cell):
