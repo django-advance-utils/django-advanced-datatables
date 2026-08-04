@@ -1,5 +1,6 @@
 import base64
 import datetime
+import inspect
 import json
 from decimal import Decimal
 from io import BytesIO
@@ -10,10 +11,14 @@ from django.contrib.auth.models import AnonymousUser
 from django.db.models import Q
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
+from django.urls import reverse
 from django_menus.menu import HtmlMenu
 from openpyxl import load_workbook
 
+from datatable_examples.column_docs import ALIAS_COLUMNS, COLUMN_SECTIONS, documented_columns
 from datatable_examples.models import Company, Payment, Person, Tags
+from datatable_examples.views.reference import ColumnReference
+from django_datatables import columns as columns_module
 from datatable_examples.views.server_side import (JsonBooleanColumn, ServerSideJsonColumn,
                                                   ServerSidePagination, ServerSideTagFilter,
                                                   ServerSideTotalsFilter)
@@ -23,7 +28,7 @@ from django_datatables.columns import (ColumnLink, DatatableColumn, DateColumn, 
                                        CurrencyPenceColumn, MultiCurrencyColumn, ZeroPenceColumn, MonthColumn,
                                        YearMonthColumn, AlignColumnLink, ViewLink, SelectColumn,
                                        MultiMenuColumnBase, DatatableColumnError, ChoiceColumn, MenuColumn,
-                                       TextFieldColumn)
+                                       TextFieldColumn, ColumnBase)
 from django_datatables.columns import JsonBooleanColumn as LibraryJsonBooleanColumn
 from django_datatables.filters import DatatableFilter
 from django_datatables.datatables import DatatableTable, DatatableView
@@ -1017,6 +1022,63 @@ class TestColumnExcelValues(TestCase):
 
     def test_ordinary_column_is_exported(self):
         self.assertFalse(DatatableColumn(column_name='name', field='name', model=Company).xl_dont_show())
+
+
+class TestColumnReference(TestCase):
+    """The Column Reference page is hand written, so keep it in step with the package."""
+
+    @staticmethod
+    def exported_columns():
+        # ColumnNameError / DatatableColumnError are Exceptions and EDIT_CELL_HTML is a str, so the
+        # ColumnBase check leaves exactly the column classes.
+        return {obj for _, obj in inspect.getmembers(columns_module, inspect.isclass)
+                if issubclass(obj, ColumnBase)}
+
+    def test_every_exported_column_is_documented(self):
+        missing = self.exported_columns() - set(documented_columns()) - set(ALIAS_COLUMNS)
+        self.assertEqual(
+            missing, set(),
+            f'{sorted(c.__name__ for c in missing)} is exported from django_datatables.columns but is not on '
+            f'the Column Reference page. Add a ColumnDoc to the right Section in column_docs.py, or add it to '
+            f'ALIAS_COLUMNS if it is an alias of a column that is already documented.')
+
+    def test_modal_columns_are_documented(self):
+        # Not exported from django_datatables.columns, so the sweep above cannot police them.
+        self.assertLessEqual({'ModalLink', 'ColumnLinkCoalesce'}, {c.__name__ for c in documented_columns()})
+
+    def test_aliases_are_not_also_documented(self):
+        both = set(ALIAS_COLUMNS) & set(documented_columns())
+        self.assertEqual(both, set(), f'{sorted(c.__name__ for c in both)} is in both ALIAS_COLUMNS and a '
+                                      f'Section - it belongs in one or the other.')
+
+    def test_no_column_is_documented_twice(self):
+        documented = documented_columns()
+        self.assertEqual(len(documented), len(set(documented)), 'a column has two ColumnDoc entries')
+
+    def test_entries_are_columns_with_prose(self):
+        for section in COLUMN_SECTIONS:
+            for doc in section.columns:
+                self.assertTrue(issubclass(doc.column, ColumnBase), f'{doc.name} is not a column class')
+                self.assertTrue(doc.summary, f'{doc.name} has no summary')
+                self.assertTrue(doc.example, f'{doc.name} has no example')
+
+    def test_demo_links_resolve(self):
+        # A renamed url_name should fail here rather than 500 the page.
+        for section in COLUMN_SECTIONS:
+            for doc in section.columns:
+                if doc.demo:
+                    reverse(doc.demo)
+                    self.assertTrue(doc.demo_title, f'{doc.name} links to {doc.demo} with no title')
+
+    def test_page_renders_every_column(self):
+        request = RequestFactory().get('/reference/columns', HTTP_USER_AGENT='test')
+        request.user = AnonymousUser()
+        response = ColumnReference.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        # as_view() returns an unrendered TemplateResponse.
+        content = response.render().content.decode()
+        for column in documented_columns():
+            self.assertIn(column.__name__, content)
 
 
 class TestMergedColumns(TestCase):

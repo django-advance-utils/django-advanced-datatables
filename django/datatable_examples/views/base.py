@@ -22,6 +22,9 @@ class ManualPage(DemoViewMixin, AjaxHelpers, MenuMixin):
     def setup_menu(self):
         self.add_menu('main_menu').add_items(
             MenuItem('manual_index', menu_display='Contents'),
+            # Reference docs rather than a live example - coloured to set it apart from the chapters.
+            MenuItem('column_reference', menu_display='Column Reference',
+                     font_awesome='fas fa-book', css_classes='text-warning'),
             *[MenuItem(menu_display=chapter.title, placement='bottom-end',
                        dropdown=[MenuItem(page.url_name, menu_display=page.title) for page in chapter.pages])
               for chapter in CHAPTERS],

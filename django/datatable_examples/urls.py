@@ -2,12 +2,15 @@ from django.urls import path
 from django.views.generic.base import RedirectView
 
 from datatable_examples.views import (columns, downloads, editing, filters, getting_started, layout, plugins,
-                                      rendering, server_side)
+                                      reference, rendering, server_side)
 
 urlpatterns = [
     path('', getting_started.ManualIndex.as_view(), name='manual_index'),
     path('datatable-redirect/', RedirectView.as_view(pattern_name='manual_index'),
          name='django-filtered-datatables'),
+
+    # Reference docs - standalone, not a manual chapter
+    path('reference/columns', reference.ColumnReference.as_view(), name='column_reference'),
 
     # Getting started
     path('getting-started/first-table', getting_started.FirstTable.as_view(), name='first_table'),

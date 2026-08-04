@@ -1,0 +1,81 @@
+{% extends 'datatable_examples/base.html' %}
+
+{% block contents %}
+    <div class="m-1 text-right">
+     <img src="{{ version_img }}">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ home_page }}"><i class="fab fa-github text-dark"></i>GitHub</a>
+    </div>
+    <div class="p-4">
+        <h3><i class="fas fa-book text-warning"></i> {{ title }}</h3>
+        {{ description|safe }}
+        <div class="row mt-4">
+            <div class="col-lg-3">
+                {# 29 columns is taller than the viewport, so the index scrolls within itself #}
+                <div class="sticky-top" style="top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto;">
+                    <div class="card">
+                        <div class="card-header font-weight-bold">Columns</div>
+                        <div class="card-body py-2">
+                            {% for section in sections %}
+                                <a class="d-block small font-weight-bold mt-2" href="#{{ section.slug }}">{{ section.title }}</a>
+                                {% for doc in section.columns %}
+                                    <a class="d-block small text-muted pl-2" href="#{{ doc.anchor }}">{{ doc.name }}</a>
+                                {% endfor %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-9">
+                {% for section in sections %}
+                    <h4 id="{{ section.slug }}" class="mt-4">{{ section.title }}</h4>
+                    <p class="text-muted">{{ section.intro|safe }}</p>
+                    {% for doc in section.columns %}
+                        <div class="card mb-3" id="{{ doc.anchor }}">
+                            <div class="card-header d-flex align-items-center flex-wrap">
+                                <code class="font-weight-bold">{{ doc.name }}</code>
+                                {% if doc.base_name %}
+                                    <small class="text-muted ml-2">extends {{ doc.base_name }}</small>
+                                {% endif %}
+                                <small class="text-muted ml-2">{{ doc.module_name }}</small>
+                                {% if doc.demo %}
+                                    <a class="badge badge-warning ml-auto" href="{% url doc.demo %}">
+                                        <i class="fas fa-play"></i> {{ doc.demo_title }}</a>
+                                {% endif %}
+                            </div>
+                            <div class="card-body">
+                                <p>{{ doc.summary|safe }}</p>
+                                {% if doc.kwargs %}
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr><th style="width:20%">kwarg</th>
+                                                <th style="width:20%">default</th>
+                                                <th>description</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for kwarg in doc.kwargs %}
+                                                <tr>
+                                                    <td><code>{{ kwarg.name }}</code></td>
+                                                    <td>{% if kwarg.default %}<code>{{ kwarg.default }}</code>
+                                                        {% else %}<span class="text-muted">required</span>{% endif %}</td>
+                                                    <td>{{ kwarg.description|safe }}</td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                {% endif %}
+                                {% if doc.example %}
+                                    {# autoescaped, and hard against the tags - whitespace inside <pre> renders #}
+                                    <pre class="mb-0"><code class="language-python">{{ doc.example }}</code></pre>
+                                {% endif %}
+                                {% if doc.notes %}
+                                    <p class="small text-muted mt-3 mb-0">{{ doc.notes|safe }}</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <script>hljs.highlightAll();</script>
+{% endblock %}
