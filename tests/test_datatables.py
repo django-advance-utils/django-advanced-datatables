@@ -6,6 +6,7 @@ Covers: table rendering, data display, column types, pagination,
         plugins (colour rows, column totals), links, non-model data,
         selection, aggregations, horizontal tables, and reordering.
 """
+import json
 import re
 import pytest
 from playwright.sync_api import Page, expect
@@ -794,3 +795,109 @@ class TestDrawUrl:
         )
         assert response.status == 200
         assert response.json() == {"data": []}
+
+
+# ===========================================================================
+# 30. Ajax tooltip column – a window filled from the server per cell
+# ===========================================================================
+
+class TestAjaxTooltipColumn:
+    """AjaxTooltipColumn opens a window with the html the view returns for that cell.
+
+    Cell handlers are delegated from the table, so they keep working on rows DataTables
+    draws later - a second page, a sort or a search - none of which exist when the
+    handlers are bound.
+    """
+
+    URL = f"{BASE}/editing/ajax-tooltips"
+    DETAILS = 4   # column index of the click column
+    HOVER = 5     # column index of the hover column
+
+    @staticmethod
+    def open_window(page: Page, row: int, column: int, hover=False):
+        cell = page.locator("table.dataTable tbody tr").nth(row).locator("td").nth(column)
+        cell.hover() if hover else cell.click()
+        page.wait_for_selector(".dt-tooltip:visible", timeout=10000)
+        page.wait_for_function(
+            "!document.querySelector('.dt-tooltip-body').innerText.includes('Loading')", timeout=10000)
+        return page.locator(".dt-tooltip-body").inner_text()
+
+    @staticmethod
+    def go_to_page(page: Page, page_no, page_length=10):
+        page.evaluate(f"django_datatables.DataTables['ajaxtooltips'].table.api()"
+                      f".page.len({page_length}).draw()")
+        page.evaluate(f"django_datatables.DataTables['ajaxtooltips'].table.api().page({page_no}).draw('page')")
+        page.wait_for_timeout(400)
+
+    def test_clicking_a_cell_opens_a_window_for_that_row(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        body = self.open_window(page, 0, self.DETAILS)
+        first_name = page.locator("table.dataTable tbody tr").first.locator("td").nth(1).text_content().strip()
+        assert first_name in body, f"window should describe the clicked row, got {body!r}"
+
+    def test_the_post_carries_the_row_and_column_number(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        with page.expect_request(lambda r: r.method == "POST" and "tooltip" in (r.post_data or "")) as posted:
+            page.locator("table.dataTable tbody tr").first.locator("td").nth(self.DETAILS).click()
+        data = json.loads(posted.value.post_data)
+        assert data["tooltip"] == "column"
+        assert data["column"] == self.DETAILS
+        assert data["row_index"] == 0
+        assert data["row_no"].startswith("i")
+
+    def test_still_works_on_a_page_datatables_drew_later(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        self.go_to_page(page, 1)
+        first_name = page.locator("table.dataTable tbody tr").first.locator("td").nth(1).text_content().strip()
+        body = self.open_window(page, 0, self.DETAILS)
+        assert first_name in body, f"page 2 row should open its own window, got {body!r}"
+
+    def test_paging_away_and_back_does_not_serve_another_rows_window(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        self.go_to_page(page, 1)
+        first_name = page.locator("table.dataTable tbody tr").first.locator("td").nth(1).text_content().strip()
+        self.open_window(page, 0, self.DETAILS)
+        page.keyboard.press("Escape")
+        self.go_to_page(page, 0)
+        self.go_to_page(page, 1)
+        assert first_name in self.open_window(page, 0, self.DETAILS)
+
+    def test_sorting_leaves_the_window_on_the_row_it_was_opened_for(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        page.evaluate("django_datatables.DataTables['ajaxtooltips'].table.api().order([1, 'desc']).draw()")
+        page.wait_for_timeout(400)
+        first_name = page.locator("table.dataTable tbody tr").first.locator("td").nth(1).text_content().strip()
+        assert first_name in self.open_window(page, 0, self.DETAILS)
+
+    def test_hover_column_opens_and_closes_with_the_pointer(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        body = self.open_window(page, 1, self.HOVER, hover=True)
+        assert "column" in body, f"hover window should report what was posted, got {body!r}"
+        page.mouse.move(5, 5)
+        page.wait_for_selector(".dt-tooltip", state="hidden", timeout=5000)
+
+    def test_escape_and_the_close_button_dismiss_the_window(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        self.open_window(page, 0, self.DETAILS)
+        page.keyboard.press("Escape")
+        page.wait_for_selector(".dt-tooltip", state="hidden", timeout=5000)
+        self.open_window(page, 0, self.DETAILS)
+        page.locator(".dt-tooltip-close").click()
+        page.wait_for_selector(".dt-tooltip", state="hidden", timeout=5000)
+
+    def test_a_second_look_at_a_cell_is_cached(self, page: Page):
+        page.goto(self.URL)
+        wait_for_datatable(page)
+        self.open_window(page, 0, self.DETAILS)
+        page.locator("table.dataTable tbody tr").first.locator("td").nth(self.DETAILS).click()   # close
+        posts = []
+        page.on("request", lambda r: posts.append(r) if r.method == "POST" else None)
+        self.open_window(page, 0, self.DETAILS)
+        assert not [r for r in posts if "tooltip" in (r.post_data or "")], "cached cell should not post again"
