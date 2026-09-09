@@ -17,12 +17,14 @@ from openpyxl import load_workbook
 
 from datatable_examples.column_docs import ALIAS_COLUMNS, COLUMN_SECTIONS, documented_columns
 from datatable_examples.models import Company, Payment, Person, Tags
+from datatable_examples.views.editing import AjaxTooltips
 from datatable_examples.views.reference import ColumnReference
 from django_datatables import columns as columns_module
 from datatable_examples.views.server_side import (JsonBooleanColumn, ServerSideJsonColumn,
                                                   ServerSidePagination, ServerSideTagFilter,
                                                   ServerSideTotalsFilter)
-from django_datatables.columns import ManyToManyColumn
+from django_datatables.columns import ManyToManyColumn, AjaxTooltipColumn
+from django_datatables.columns.ajax_tooltip import TOOLTIP_ICON
 from django_datatables.columns import (ColumnLink, DatatableColumn, DateColumn, DateTimeColumn, TickColumn,
                                        LocaleCurrencyColumn, ExcelDatatableColumn, CurrencyColumn,
                                        CurrencyPenceColumn, MultiCurrencyColumn, ZeroPenceColumn, MonthColumn,
@@ -1189,3 +1191,156 @@ class TestMergedColumns(TestCase):
     def test_select_column_title_overridable(self):
         self.assertIn('Select all', SelectColumn(column_name='sel', model=Person).title)
         self.assertEqual(SelectColumn(column_name='sel', title='', model=Person).title, '')
+
+
+class TestAjaxTooltipColumn(TestCase):
+    """A column whose cells open a tooltip window filled by an ajax post."""
+
+    @staticmethod
+    def make_table(**kwargs):
+        table = DatatableTable('tooltip', model=Person)
+        table.add_columns('id', 'first_name', AjaxTooltipColumn(column_name='details', **kwargs))
+        return table
+
+    def test_options_are_passed_to_the_javascript(self):
+        column = self.make_table(trigger='hover', tooltip_title='Person', width=500).columns[2]
+        self.assertEqual(column.options['tooltip'], {
+            'command': 'column', 'trigger': 'hover', 'title': 'Person', 'width': 500, 'max_height': 320,
+            'css_class': None, 'cache': True, 'delay': 250, 'placement': 'auto', 'send_row_data': True})
+
+    def test_options_are_json_serializable(self):
+        # colOptions is written into the page as json - a callable left in there would break it
+        table = self.make_table(tooltip=lambda **kwargs: 'html')
+        self.assertIn('"tooltip":', table.col_def_str())
+
+    def test_cells_are_marked_as_a_trigger(self):
+        column = self.make_table(field='id').columns[2]
+        self.assertIn('dt-tooltip-cell', column.style()['className'])
+
+    def test_column_without_a_field_renders_an_icon(self):
+        column = self.make_table().columns[2]
+        self.assertEqual(column.options['render'], [{'html': TOOLTIP_ICON, 'function': 'Html'}])
+        self.assertFalse(column.style()['orderable'])
+        self.assertTrue(column.xl_dont_show())
+
+    def test_column_with_a_field_shows_its_value(self):
+        column = self.make_table(field='first_name').columns[2]
+        self.assertNotIn('render', column.options)
+        self.assertFalse(column.xl_dont_show())
+
+    def test_cell_html_overrides_the_default(self):
+        column = self.make_table(cell_html='<i class="fa fa-eye"></i>').columns[2]
+        self.assertEqual(column.options['render'][0]['html'], '<i class="fa fa-eye"></i>')
+
+    def test_get_tooltip_calls_the_callable_with_the_posted_values(self):
+        sent = {}
+
+        def tooltip(**kwargs):
+            sent.update(kwargs)
+            return 'the html'
+
+        column = self.make_table(tooltip=tooltip).columns[2]
+        self.assertEqual(column.get_tooltip(row_no='i3', column=2), 'the html')
+        # column is the column number, so the column itself arrives under its own name
+        self.assertEqual(sent, {'column': 2, 'row_no': 'i3', 'column_instance': column})
+
+    def test_get_tooltip_without_a_handler_explains_itself(self):
+        column = self.make_table().columns[2]
+        with self.assertRaises(DatatableColumnError):
+            column.get_tooltip(row_no='i3')
+
+
+class TooltipView(AjaxHelpers, DatatableView):
+    """Two tooltip columns - one answered by the column, one by the view."""
+
+    model = Person
+
+    @staticmethod
+    def person_tooltip(row_no, row_index, column, column_name, row_data, **_kwargs):
+        return json.dumps({'row_no': row_no, 'row_index': row_index, 'column': column,
+                           'column_name': column_name, 'row_data': row_data})
+
+    def tooltip_summary(self, row_no, column, **_kwargs):
+        return self.command_response('datatable_tooltip', html=f'view handled {row_no} {column}')
+
+    @staticmethod
+    def setup_table(table):
+        table.add_columns(
+            'id',
+            'first_name',
+            AjaxTooltipColumn(column_name='details', tooltip=TooltipView.person_tooltip),
+            AjaxTooltipColumn(column_name='summary', command='summary'),
+        )
+
+
+class TestAjaxTooltipPost(TestCase):
+    """The browser posts the row and column it is on; the response fills the window."""
+
+    def setUp(self):
+        make_data()
+        self.factory = RequestFactory()
+
+    def post(self, **data):
+        request = self.factory.post('/', json.dumps(data), content_type='application/json',
+                                    HTTP_X_REQUESTED_WITH='XMLHttpRequest', HTTP_USER_AGENT='test')
+        request.user = AnonymousUser()
+        return TooltipView.as_view()(request)
+
+    def test_column_answers_with_the_row_and_column_it_was_sent(self):
+        person = Person.objects.get(first_name='Alice')
+        response = self.post(tooltip='column', table_id='tooltipview', row_no=f'i{person.pk}', row_index=3,
+                             column=2, column_name='details', row_data=json.dumps([person.pk, 'Alice']))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {
+            'row_no': f'i{person.pk}', 'row_index': 3, 'column': 2, 'column_name': 'details',
+            'row_data': [person.pk, 'Alice']})   # row_data is decoded for the handler
+
+    def test_view_can_answer_a_command_of_its_own(self):
+        response = self.post(tooltip='summary', table_id='tooltipview', row_no='i1', row_index=0, column=3,
+                             column_name='summary')
+        self.assertEqual(json.loads(response.content),
+                         [{'function': 'datatable_tooltip', 'html': 'view handled i1 3'}])
+
+    def test_a_column_that_is_not_a_tooltip_column_is_rejected(self):
+        with self.assertRaises(DatatableError):
+            self.post(tooltip='column', table_id='tooltipview', row_no='i1', row_index=0, column=1,
+                      column_name='first_name')
+
+
+class TestAjaxTooltipDemoPage(TestCase):
+    """The manual's Ajax Tooltip page - the table renders and both windows fill."""
+
+    def setUp(self):
+        make_data()
+        self.factory = RequestFactory()
+
+    def page(self):
+        request = self.factory.get(reverse('ajax_tooltips'), HTTP_USER_AGENT='test')
+        request.user = AnonymousUser()
+        return AjaxTooltips.as_view()(request).render().content.decode()
+
+    def post(self, **data):
+        request = self.factory.post(reverse('ajax_tooltips'), json.dumps(data),
+                                    content_type='application/json', HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+                                    HTTP_USER_AGENT='test')
+        request.user = AnonymousUser()
+        return AjaxTooltips.as_view()(request)
+
+    def test_column_options_reach_the_page(self):
+        self.assertIn('"tooltip":', self.page())
+
+    def test_details_window_describes_the_row(self):
+        person = Person.objects.get(first_name='Alice')
+        response = self.post(tooltip='column', table_id='ajaxtooltips', row_no=f'i{person.pk}', row_index=0,
+                             column=4, column_name='details', row_data=json.dumps([person.pk, 'Alice']))
+        content = response.content.decode()
+        self.assertIn('Alice Smith', content)
+        self.assertIn('Bob Jones', content)  # a colleague at the same company
+
+    def test_hover_window_shows_what_was_posted(self):
+        person = Person.objects.get(first_name='Alice')
+        response = self.post(tooltip='column', table_id='ajaxtooltips', row_no=f'i{person.pk}', row_index=2,
+                             column=5, column_name='sent', row_data=json.dumps([person.pk, 'Alice']))
+        content = response.content.decode()
+        self.assertIn(f'i{person.pk}', content)
+        self.assertIn('column <b>5</b>', content)

@@ -113,6 +113,7 @@ def setup_table(table):
 | `LambdaColumn` | Processes values with a lambda function |
 | `SelectColumn` | Row selection checkboxes |
 | `TextFieldColumn` | Long text with truncation |
+| `AjaxTooltipColumn` | Opens a large tooltip window filled by an ajax call |
 
 ### Model-Defined Columns
 
@@ -270,6 +271,54 @@ class MyView(DatatableView):
         table = self.tables[kwargs['table_id']]
         return table.refresh_row(self.request, kwargs['row_no'])
 ```
+
+### Ajax Tooltip Windows
+
+`AjaxTooltipColumn` turns its cells into a trigger for a large tooltip window. Clicking (or
+hovering) a cell posts the table id, the row number and the column number to the view, and the
+html that comes back fills a floating window beside the cell - so an expensive summary is
+fetched once for the row asked about rather than for every row of the table.
+
+```python
+from django.utils.html import format_html
+from django_datatables.columns import AjaxTooltipColumn
+
+
+class MyView(AjaxHelpers, DatatableView):
+    model = Person
+
+    @staticmethod
+    def person_tooltip(row_no, row_index, column, column_name, row_data, **kwargs):
+        # row_no is 'i' + the row's primary key; column is the DataTables column number
+        person = Person.objects.get(pk=row_no[1:])
+        return format_html('<b>{}</b> - row {}, column {}', person, row_index, column)
+
+    @staticmethod
+    def setup_table(table):
+        table.add_columns(
+            'first_name',
+            # no field, so the cell is an icon to click
+            AjaxTooltipColumn(column_name='details', title='Details', tooltip_title='Person',
+                              tooltip=MyView.person_tooltip, width=460),
+            # the whole cell is the trigger, opening on hover
+            AjaxTooltipColumn(column_name='notes', field='surname', trigger='hover'),
+        )
+```
+
+The post is dispatched by ajax-helpers to `tooltip_<command>` on the view; `command` defaults to
+`column`, which `DatatableView.tooltip_column` answers by calling the column's `get_tooltip` -
+either the `tooltip=` callable above or an override in a subclass. A view can answer for itself
+by overriding `tooltip_column`, or by giving the column a `command=` of its own and adding the
+matching method. Returning plain html fills the window; a view needing to do more can respond
+with commands instead:
+
+```python
+def tooltip_notes(self, row_no, column, **kwargs):
+    return self.command_response('datatable_tooltip', html='<b>Notes</b>', title='Row ' + row_no)
+```
+
+Other kwargs: `trigger` (`'click'` or `'hover'`), `tooltip_title`, `width`, `max_height`,
+`placement`, `tooltip_class`, `cache`, `delay`, `cell_html` and `send_row_data`.
 
 ### Data Export
 

@@ -35,6 +35,7 @@ urlpatterns = [
     # Editing & actions
     path('editing/inline-editing', editing.InlineEditing.as_view(), name='inline_editing'),
     path('editing/row-buttons', editing.RowButtons.as_view(), name='row_buttons'),
+    path('editing/ajax-tooltips', editing.AjaxTooltips.as_view(), name='ajax_tooltips'),
 
     # Filters
     path('filters/pivot-and-select2', filters.PivotSelect2Filters.as_view(), name='pivot_select2_filters'),

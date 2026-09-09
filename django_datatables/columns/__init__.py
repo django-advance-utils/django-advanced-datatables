@@ -8,4 +8,5 @@ from .columns import (DatatableColumn, ColumnLink, ChoiceColumn, CallableColumn,
                       SelectColumnNoTitle, ZeroPenceColumn, MonthColumn, YearMonthColumn, TickColumn,
                       TableRowColour, AlignColumnLink, XlColumnLink, ViewLink, JsonBooleanColumn, JsonKeyColumn,
                       MultiMenuColumnBase, ExcelDatatableColumn)
+from .ajax_tooltip import AjaxTooltipColumn
 from .column_base import EDIT_CELL_HTML

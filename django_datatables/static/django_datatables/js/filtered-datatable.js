@@ -118,6 +118,315 @@ if (typeof django_datatables === 'undefined') {
             }
         }
 
+        // -----------------------------------------------------------------------------
+        // Ajax tooltip window
+        //
+        // A cell of an AjaxTooltipColumn posts the table, the row and the column number it
+        // was triggered on; the html that comes back fills a floating window beside the
+        // cell. Options are per column, read from colOptions[column].tooltip, so a plain
+        // table needs no extra javascript.
+        // -----------------------------------------------------------------------------
+        var ajax_tooltip = function () {
+
+            var panel = null;        // the window - one at a time, reused
+            var open_cell = null;    // the td it is anchored to
+            var open_options = null;
+            var hover_timer = null;
+            var hide_timer = null;
+            var request_no = 0;      // responses for a window already closed are dropped
+            var cache = {};          // table_id -> cell key -> html
+
+            function element() {
+                if (panel === null) {
+                    panel = $('<div class="dt-tooltip" style="display:none">' +
+                        '<div class="dt-tooltip-arrow"></div>' +
+                        '<div class="dt-tooltip-header"><span class="dt-tooltip-title"></span>' +
+                        '<button type="button" class="dt-tooltip-close" aria-label="Close">&times;</button></div>' +
+                        '<div class="dt-tooltip-body"></div></div>');
+                    panel.on('click', '.dt-tooltip-close', function () {
+                        hide();
+                    });
+                    panel.on('mouseenter', function () {
+                        window.clearTimeout(hide_timer);
+                    });
+                    panel.on('mouseleave', function () {
+                        if (open_options && open_options.trigger === 'hover') {
+                            hide();
+                        }
+                    });
+                    $('body').append(panel);
+                }
+                return panel;
+            }
+
+            function options(table_id, column) {
+                var datatable = DataTables[table_id];
+                if (datatable === undefined || datatable.initsetup === undefined) {
+                    return null;
+                }
+                var column_options = datatable.initsetup.colOptions[column];
+                if (column_options === undefined || column_options.tooltip === undefined) {
+                    return null;
+                }
+                return column_options.tooltip;
+            }
+
+            function css_length(value) {
+                return typeof value === 'number' ? value + 'px' : value;
+            }
+
+            function hide() {
+                window.clearTimeout(hover_timer);
+                window.clearTimeout(hide_timer);
+                request_no += 1;
+                open_cell = null;
+                open_options = null;
+                if (panel !== null) {
+                    panel.hide();
+                }
+            }
+
+            function position() {
+                if (open_cell === null) {
+                    return;
+                }
+                var el = element();
+                var cell = $(open_cell);
+                var offset = cell.offset();
+                if (offset === undefined) {
+                    return;
+                }
+                var panel_width = el.outerWidth();
+                var panel_height = el.outerHeight();
+                var scroll_top = $(window).scrollTop();
+                var scroll_left = $(window).scrollLeft();
+                var below = offset.top + cell.outerHeight() + 8;
+                var above = offset.top - panel_height - 8;
+                var placement = open_options.placement || 'auto';
+                var no_room_below = below + panel_height > scroll_top + $(window).height();
+                if (placement === 'top' || (placement !== 'bottom' && no_room_below && above > scroll_top)) {
+                    el.removeClass('dt-tooltip-below').addClass('dt-tooltip-above');
+                    el.css('top', above + 'px');
+                } else {
+                    el.removeClass('dt-tooltip-above').addClass('dt-tooltip-below');
+                    el.css('top', below + 'px');
+                }
+                var centre = offset.left + cell.outerWidth() / 2;
+                var left = Math.min(Math.max(centre - panel_width / 2, scroll_left + 4),
+                    scroll_left + $(window).width() - panel_width - 4);
+                el.css('left', left + 'px');
+                $('.dt-tooltip-arrow', el).css('left',
+                    Math.min(Math.max(centre - left, 14), panel_width - 14) + 'px');
+            }
+
+            function content(html, title) {
+                var el = element();
+                $('.dt-tooltip-body', el).html(html === undefined ? '' : html);
+                if (title !== undefined && title !== null) {
+                    $('.dt-tooltip-title', el).html(title);
+                    $('.dt-tooltip-header', el).show();
+                    el.removeClass('dt-tooltip-plain');
+                }
+                position();
+            }
+
+            function fetch(cell, table_id, opts, cache_key) {
+                var datatable = DataTables[table_id];
+                var index = datatable.table.api().cell(cell).index();
+                var row = datatable.table.api().row(index.row);
+                var data = {
+                    tooltip: opts.command,
+                    table_id: table_id,
+                    row_no: $(cell).closest('tr').attr('id'),
+                    row_index: index.row,
+                    column: index.column,
+                    column_name: datatable.initsetup.tableOptions.columnDefs[index.column].name
+                };
+                if (opts.send_row_data !== false) {
+                    data.row_data = JSON.stringify(row.data());
+                }
+                var sent_for = request_no;
+                $.ajax({
+                    url: ajax_helpers.window_location,
+                    method: 'post',
+                    data: JSON.stringify(data),
+                    contentType: 'application/json',
+                    cache: false,
+                    beforeSend: function (xhr) {
+                        xhr.setRequestHeader('X-CSRFToken', ajax_helpers.getCookie('csrftoken'));
+                    },
+                    success: function (response) {
+                        if (sent_for !== request_no) {
+                            return;   // the window has been closed or moved on since
+                        }
+                        if (typeof response === 'object') {
+                            // A view answering with commands fills the window itself
+                            ajax_helpers.process_commands(response);
+                            return;
+                        }
+                        if (cache_key !== null) {
+                            cache[table_id][cache_key] = response;
+                        }
+                        content(response);
+                    },
+                    error: function () {
+                        if (sent_for === request_no) {
+                            content('<div class="text-danger">Unable to load</div>');
+                        }
+                    }
+                });
+            }
+
+            function show(cell, table_id, opts) {
+                var el = element();
+                request_no += 1;
+                open_cell = cell;
+                open_options = opts;
+                el.attr('class', 'dt-tooltip' + (opts.css_class ? ' ' + opts.css_class : ''));
+                el.css({'width': css_length(opts.width), 'max-width': 'calc(100vw - 20px)'});
+                $('.dt-tooltip-body', el).css('max-height', css_length(opts.max_height));
+                $('.dt-tooltip-title', el).html(opts.title === null || opts.title === undefined ? '' : opts.title);
+                $('.dt-tooltip-close', el).toggle(opts.trigger !== 'hover');
+                if (!opts.title && opts.trigger === 'hover') {
+                    $('.dt-tooltip-header', el).hide();
+                    el.addClass('dt-tooltip-plain');
+                } else {
+                    $('.dt-tooltip-header', el).show();
+                }
+                var row_no = $(cell).closest('tr').attr('id');
+                var column = DataTables[table_id].table.api().cell(cell).index().column;
+                // Rows are only stable enough to cache against once they have an id
+                var cache_key = (opts.cache !== false && row_no !== undefined) ? row_no + ':' + column : null;
+                if (cache[table_id] === undefined) {
+                    cache[table_id] = {};
+                }
+                if (cache_key !== null && cache[table_id][cache_key] !== undefined) {
+                    el.show();
+                    content(cache[table_id][cache_key]);
+                    return;
+                }
+                $('.dt-tooltip-body', el).html('<div class="dt-tooltip-loading">Loading...</div>');
+                el.show();
+                position();
+                fetch(cell, table_id, opts, cache_key);
+            }
+
+            function cell_event(event_type, table_id, cell, event) {
+                var datatable = DataTables[table_id];
+                if (datatable === undefined || datatable.table === undefined) {
+                    return;
+                }
+                var index;
+                try {
+                    index = datatable.table.api().cell(cell).index();
+                } catch (e) {
+                    return;
+                }
+                if (index === undefined) {
+                    return;
+                }
+                var opts = options(table_id, index.column);
+                if (opts === null) {
+                    return;
+                }
+                var trigger = opts.trigger === 'hover' ? 'hover' : 'click';
+                if (event_type === 'click') {
+                    if (trigger !== 'click') {
+                        return;
+                    }
+                    // leave links, buttons and inputs in the cell to do their own job
+                    if ($(event.target).closest('a, button, input, select, textarea').length) {
+                        return;
+                    }
+                    if (open_cell === cell) {
+                        hide();
+                    } else {
+                        show(cell, table_id, opts);
+                    }
+                } else if (event_type === 'mouseenter') {
+                    if (trigger !== 'hover') {
+                        return;
+                    }
+                    window.clearTimeout(hide_timer);
+                    window.clearTimeout(hover_timer);
+                    if (open_cell === cell) {
+                        return;
+                    }
+                    hover_timer = window.setTimeout(function () {
+                        show(cell, table_id, opts);
+                    }, opts.delay === undefined ? 250 : opts.delay);
+                } else if (event_type === 'mouseleave') {
+                    if (trigger !== 'hover') {
+                        return;
+                    }
+                    window.clearTimeout(hover_timer);
+                    hide_timer = window.setTimeout(function () {
+                        if (open_cell === cell) {
+                            hide();
+                        }
+                    }, 200);
+                }
+            }
+
+            function table_drawn(table_id) {
+                // the rows behind the cached html have been replaced
+                cache[table_id] = {};
+                if (open_cell !== null && $(open_cell).closest('body').length === 0) {
+                    hide();
+                }
+            }
+
+            function bind(datatable) {
+                var has_tooltip = false;
+                for (var c = 0; c < datatable.initsetup.colOptions.length; c++) {
+                    if (datatable.initsetup.colOptions[c].tooltip !== undefined) {
+                        has_tooltip = true;
+                        break;
+                    }
+                }
+                if (!has_tooltip) {
+                    return;
+                }
+                var table_id = datatable.table_id;
+                var table = $('#' + table_id);
+                table.on('click', 'tbody td', function (event) {
+                    cell_event('click', table_id, this, event);
+                });
+                table.on('mouseenter', 'tbody td', function (event) {
+                    cell_event('mouseenter', table_id, this, event);
+                });
+                table.on('mouseleave', 'tbody td', function (event) {
+                    cell_event('mouseleave', table_id, this, event);
+                });
+                datatable.table.api().on('draw', function () {
+                    table_drawn(table_id);
+                });
+            }
+
+            $(document).on('keydown', function (event) {
+                if (event.which === 27) {
+                    hide();
+                }
+            });
+
+            $(document).on('mousedown', function (event) {
+                if (open_cell !== null && open_options.trigger !== 'hover' &&
+                    !$(event.target).closest('.dt-tooltip').length && !$(event.target).closest(open_cell).length) {
+                    hide();
+                }
+            });
+
+            $(window).on('resize scroll', function () {
+                position();
+            });
+
+            return {bind: bind, show: show, hide: hide, content: content, cell_event: cell_event};
+        }();
+
+        ajax_helpers.command_functions.datatable_tooltip = function (command) {
+            ajax_tooltip.content(command.html, command.title);
+        };
+
         ajax_helpers.command_functions.delete_row = function (command) {
             DataTables[command.table_id].table.api().row('#' + command.row_no).remove()
             DataTables[command.table_id].table.api().draw(false)
@@ -878,6 +1187,7 @@ if (typeof django_datatables === 'undefined') {
                     this.plugins = django_datatables.setup[html_id].plugins
                     django_datatables.setup[html_id].plugins = []
                 }
+                ajax_tooltip.bind(this)
                 this.exec_filter('init', this)
                 if (!tablesetup.tableOptions.serverSide) {
                     // Server-side tables only hold one page of rows; counts
@@ -1227,6 +1537,7 @@ if (typeof django_datatables === 'undefined') {
             row_send,
             column_select,
             select_item,
+            ajax_tooltip,
         }
     }()
 }

@@ -1,8 +1,11 @@
 import json
 
+from django.utils.html import format_html, format_html_join
+
 from datatable_examples import models
 from datatable_examples.views.base import ManualPage
-from django_datatables.columns import ColumnBase, DatatableColumn, DateColumn, ManyToManyColumn
+from django_datatables.columns import (AjaxTooltipColumn, ColumnBase, DatatableColumn, DateColumn,
+                                       ManyToManyColumn)
 from django_datatables.datatables import DatatableView
 from django_datatables.helpers import render_replace, row_button
 
@@ -105,4 +108,60 @@ class RowButtons(ManualPage, DatatableView):
             '<code>CompanyTags</code> column with the <code>ValueInColumn</code> function. '
             '<i>Delete Row</i> responds with the <code>delete_row</code> command, which removes the '
             'row client-side.'
+        )}
+
+
+class AjaxTooltips(ManualPage, DatatableView):
+    model = models.Person
+    page_title = 'Ajax Tooltip Column'
+    code_examples = ['setup_table', 'person_tooltip', 'sent_tooltip']
+
+    @staticmethod
+    def person_tooltip(row_no, **_kwargs):
+        """Build the window's html for one row - row_no is 'i' + the row's primary key."""
+        person = models.Person.objects.select_related('company').get(pk=row_no[1:])
+        colleagues = models.Person.objects.filter(company=person.company).exclude(pk=person.pk)
+        rows = format_html_join(
+            '', '<tr><td class="pr-3">{}</td><td>{}</td></tr>',
+            (('Title', person.get_title_display() or '-'),
+             ('Name', f'{person.first_name} {person.surname}'),
+             ('Company', person.company.name or '-'),
+             ('Date entered', person.date_entered.strftime('%d/%m/%Y')),
+             ('Colleagues', colleagues.count())))
+        return format_html('<table class="table table-sm mb-2">{}</table>{}', rows, format_html_join(
+            '', '<span class="badge badge-secondary mr-1">{}</span>',
+            ((f'{c.first_name} {c.surname}',) for c in colleagues[:20])))
+
+    @staticmethod
+    def sent_tooltip(row_no, row_index, column, column_name, row_data, **_kwargs):
+        """Everything the browser posted - the row and the column it was hovering over."""
+        return format_html(
+            '<div>row_no <b>{}</b> (row {}), column <b>{}</b> ({})</div><div class="mt-1">{}</div>',
+            row_no, row_index, column, column_name, row_data)
+
+    @staticmethod
+    def setup_table(table):
+        table.add_columns(
+            'id',
+            'first_name',
+            'surname',
+            ('company__name', {'title': 'Company'}),
+            AjaxTooltipColumn(column_name='details', title='Details', tooltip_title='Person',
+                              tooltip=AjaxTooltips.person_tooltip, width=460),
+            AjaxTooltipColumn(column_name='sent', field='date_entered', title='Date Entered (hover)',
+                              trigger='hover', tooltip_title='Posted to the view',
+                              tooltip=AjaxTooltips.sent_tooltip, width=420, placement='top'),
+        )
+
+    def add_to_context(self, **kwargs):
+        return {'description': (
+            'An <code>AjaxTooltipColumn</code> turns its cells into a trigger for a large tooltip window. '
+            'Clicking the <i>Details</i> icon posts the table id, the row number and the column number to the '
+            'view, and the html that comes back fills a floating window beside the cell - so the query behind '
+            'it runs once, for the one row asked about, rather than for every row of the table. '
+            'The <i>Date Entered</i> column uses <code>trigger=\'hover\'</code> and shows exactly what the '
+            'browser sent. The default <code>command</code> hands the post to the column\'s '
+            '<code>get_tooltip</code>, which here is the <code>tooltip=</code> callable; a view can answer for '
+            'itself instead by overriding <code>tooltip_column</code>, or by giving the column a '
+            '<code>command=</code> of its own and adding a matching <code>tooltip_&lt;command&gt;</code> method.'
         )}

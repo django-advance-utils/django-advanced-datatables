@@ -6,6 +6,7 @@ from django.http.response import HttpResponseBase
 from django.views.generic import TemplateView
 
 from django_datatables.datatables import DatatableTable
+from django_datatables.datatables.datatable_error import DatatableError
 from django_datatables.detect_device import detect_device
 from django_datatables.models import SavedState
 
@@ -155,3 +156,28 @@ class DatatableView(TemplateView):
                 return response
             else:
                 return self.command_response(response)
+
+    def tooltip_column(self, **kwargs):
+        """Fill an AjaxTooltipColumn's window - the default handler for its ajax post.
+
+        The browser sends the table, the row and the column the pointer is on; the column's
+        get_tooltip returns the html to show. A view wanting to answer for itself either
+        overrides this method or gives the column a command= of its own, which ajax-helpers
+        dispatches to tooltip_<command> on the view instead.
+        """
+        table_id = kwargs.pop('table_id', None) or next(iter(self.tables))
+        self.setup_tables(table_id)
+        table = self.tables[table_id]
+        column_index = int(kwargs.pop('column'))
+        column = table.columns[column_index]
+        if not hasattr(column, 'get_tooltip'):
+            raise DatatableError(f'Column {column.column_name} of {table_id} has no get_tooltip - a tooltip '
+                                 f'posted to it needs an AjaxTooltipColumn')
+        row_data = kwargs.pop('row_data', None)
+        if isinstance(row_data, str):
+            row_data = json.loads(row_data)
+        response = column.get_tooltip(view=self, table=table, table_id=table_id, column=column_index,
+                                      row_data=row_data, **kwargs)
+        if isinstance(response, HttpResponseBase):
+            return response
+        return HttpResponse('' if response is None else response)

@@ -10,7 +10,7 @@ at import time would break the whole demo site.
 """
 from dataclasses import dataclass, field as dataclass_field
 
-from django_datatables.columns import (AlignColumnLink, BooleanColumn, CallableColumn, ChoiceColumn, ColumnBase,
+from django_datatables.columns import (AjaxTooltipColumn, AlignColumnLink, BooleanColumn, CallableColumn, ChoiceColumn, ColumnBase,
                                        ColumnLink, CurrencyColumn, CurrencyPenceColumn, DatatableColumn, DateColumn,
                                        DateTimeColumn, ExcelDatatableColumn, GroupedColumn, JsonBooleanColumn,
                                        JsonKeyColumn, LambdaColumn, LocaleCurrencyColumn, ManyToManyColumn,
@@ -475,6 +475,51 @@ MenuColumn(column_name='menu', field='id',
            menu=HtmlMenu(self.request, 'button_group').add_items(
                ('company_detail', 'View', {'url_kwargs': {'pk': DUMMY_ID}}),
            ))""",
+        ),
+
+        ColumnDoc(
+            column=AjaxTooltipColumn,
+            summary='Cells that open a large tooltip window whose contents come from an ajax call. Clicking '
+                    '(or hovering) a cell posts the table id, the row number and the column number to the view '
+                    'and shows the html that comes back beside the cell, so an expensive summary is fetched '
+                    'once for the row asked about instead of for every row of the table.',
+            kwargs=(
+                KwargDoc('tooltip', 'None', 'Callable returning the window\'s html, called with the posted '
+                                            '<code>row_no</code>, <code>row_index</code>, <code>column</code>, '
+                                            '<code>column_name</code> and <code>row_data</code>. Subclassing '
+                                            'and overriding <code>get_tooltip</code> does the same job.'),
+                KwargDoc('command', "'column'", 'Posted as <code>tooltip</code>, so the view method is '
+                                                '<code>tooltip_&lt;command&gt;</code>. The default is answered '
+                                                'by <code>DatatableView.tooltip_column</code>.'),
+                KwargDoc('trigger', "'click'", "<code>'click'</code> stays open until dismissed; "
+                                               "<code>'hover'</code> opens after <code>delay</code> ms."),
+                KwargDoc('tooltip_title', 'None', 'Heading for the window. Without one a hover window has no '
+                                                  'header bar.'),
+                KwargDoc('width', '400', 'Window width, and <code>max_height</code> (320) the height its body '
+                                         'scrolls at. Numbers are px.'),
+                KwargDoc('cache', 'True', 'Keep each cell\'s html so a second look does not post again. '
+                                          'Cleared whenever the table redraws.'),
+                KwargDoc('cell_html', 'None', 'Html rendered in every cell - defaults to an icon when the '
+                                              'column has no field, otherwise to the field\'s value.'),
+                KwargDoc('placement', "'auto'", "<code>'auto'</code>, <code>'bottom'</code> or "
+                                                "<code>'top'</code>. <code>tooltip_class</code> adds a css "
+                                                "class to the window."),
+            ),
+            example="""\
+def person_tooltip(row_no, column, **kwargs):
+    person = Person.objects.get(pk=row_no[1:])
+    return format_html('<b>{}</b> from column {}', person, column)
+
+table.add_columns(
+    'first_name',
+    AjaxTooltipColumn(column_name='details', title='Details',
+                      tooltip_title='Person', tooltip=person_tooltip),
+)""",
+            demo='ajax_tooltips', demo_title='Ajax Tooltip Column',
+            notes='Needs the <b>ajax-helpers</b> <code>AjaxHelpers</code> mixin on the view, which dispatches '
+                  'the post. A view can answer for itself by overriding <code>tooltip_column</code> instead of '
+                  'giving the column a <code>tooltip=</code> callable, and either can respond with commands '
+                  '(<code>command_response(\'datatable_tooltip\', html=...)</code>) rather than plain html.',
         ),
 
         ColumnDoc(

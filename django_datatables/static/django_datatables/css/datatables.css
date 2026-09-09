@@ -245,3 +245,99 @@
 .side-filter a:hover {
     text-decoration: none;
 }
+
+/* ---------------------------------------------------------------------------
+   AjaxTooltipColumn - cells that open a large tooltip window filled by ajax
+   --------------------------------------------------------------------------- */
+
+.dt-tooltip-cell {
+    cursor: pointer;
+}
+
+.dt-tooltip-cell:hover {
+    background-color: #a2bbd333;
+}
+
+.dt-tooltip {
+    position: absolute;
+    z-index: 1080;
+    background-color: #fff;
+    border: 1px solid rgba(0, 0, 0, .2);
+    border-radius: .3rem;
+    box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .25);
+    font-size: .875rem;
+    line-height: 1.4;
+    color: #212529;
+    text-align: left;
+    white-space: normal;
+}
+
+.dt-tooltip-header {
+    display: flex;
+    align-items: center;
+    padding: .35rem .5rem .35rem .75rem;
+    background-color: #f1f3f5;
+    border-bottom: 1px solid rgba(0, 0, 0, .2);
+    border-radius: calc(.3rem - 1px) calc(.3rem - 1px) 0 0;
+}
+
+.dt-tooltip-title {
+    flex: 1 1 auto;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dt-tooltip-close {
+    flex: 0 0 auto;
+    padding: 0 .25rem;
+    border: 0;
+    background: transparent;
+    font-size: 1.25rem;
+    line-height: 1;
+    color: inherit;
+    opacity: .6;
+    cursor: pointer;
+}
+
+.dt-tooltip-close:hover {
+    opacity: 1;
+}
+
+.dt-tooltip-body {
+    padding: .5rem .75rem;
+    overflow: auto;
+}
+
+.dt-tooltip-loading {
+    color: #6c757d;
+    font-style: italic;
+}
+
+.dt-tooltip-arrow {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    margin-left: -6px;
+    background-color: #f1f3f5;
+    border: 1px solid rgba(0, 0, 0, .2);
+    transform: rotate(45deg);
+}
+
+.dt-tooltip-below .dt-tooltip-arrow {
+    top: -7px;
+    border-right: 0;
+    border-bottom: 0;
+}
+
+/* No header, so the arrow meets the body */
+.dt-tooltip-plain .dt-tooltip-arrow {
+    background-color: #fff;
+}
+
+.dt-tooltip-above .dt-tooltip-arrow {
+    bottom: -7px;
+    background-color: #fff;
+    border-left: 0;
+    border-top: 0;
+}

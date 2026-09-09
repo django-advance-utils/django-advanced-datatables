@@ -37,6 +37,7 @@ CHAPTERS = (
     Chapter('Editing & Actions', (
         PageRef('inline_editing', 'Inline Editing'),
         PageRef('row_buttons', 'Row Buttons'),
+        PageRef('ajax_tooltips', 'Ajax Tooltip Column'),
     )),
     Chapter('Filters', (
         PageRef('pivot_select2_filters', 'Pivot & Select2'),
