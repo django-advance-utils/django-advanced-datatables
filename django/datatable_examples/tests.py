@@ -498,6 +498,31 @@ class TestBaseQuerysetHook(TestCase):
         self.assertEqual(facets['ACME'][0], facets['ACME'][1])
         self.assertEqual(sum(v[1] for v in facets.values()), Person.objects.count())
 
+    def test_count_filtered_hook(self):
+        """The filtered-records count goes through _count_filtered so a table can cache it."""
+        calls = []
+
+        class CountingTable(ServerSideTable):
+            def _count_filtered(self, queryset):
+                calls.append(str(queryset.query))
+                return 42
+
+        table = CountingTable('counting', model=Person)
+        table.add_columns('id', 'first_name', 'surname')
+        table.search_fields = ['first_name']
+        request = RequestFactory().get('/')
+        post = {'draw': '2', 'start': '0', 'length': '10', 'search[value]': 'ali'}
+        result = json.loads(table.get_server_side_json(request, table.get_query(), post))
+        self.assertEqual(result['recordsFiltered'], 42)
+        self.assertEqual(result['recordsTotal'], Person.objects.count())
+        self.assertEqual(len(calls), 1)
+        self.assertIn('ali', calls[0].lower())
+        # without a search or filter the total is reused and the hook is not called
+        result = json.loads(table.get_server_side_json(request, table.get_query(),
+                                                       {'draw': '3', 'start': '0', 'length': '10'}))
+        self.assertEqual(result['recordsFiltered'], Person.objects.count())
+        self.assertEqual(len(calls), 1)
+
 
 class TestServerSideResponse(TestCase):
     """Simulated DataTables requests through the demo view."""

@@ -384,7 +384,7 @@ class ServerSideTable(DatatableTable):
 
         # Count after search/filter for the "x of y records" footer.
         # Skip the second COUNT when nothing is being filtered — it equals total.
-        records_filtered = queryset.count() if filters_active else records_total
+        records_filtered = self._count_filtered(queryset) if filters_active else records_total
 
         # Fully-filtered queryset (before ordering/slicing) feeds facet counts.
         filtered_queryset = queryset
@@ -416,6 +416,15 @@ class ServerSideTable(DatatableTable):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _count_filtered(self, queryset):
+        """Return the row count after search / js filters (``recordsFiltered``).
+
+        Runs on every draw while a search or filter is active. Override to cache
+        it when the count is expensive and the filter state repeats between
+        paging draws.
+        """
+        return queryset.count()
 
     def _count_total(self, queryset):
         """Return the total row count for this queryset.
