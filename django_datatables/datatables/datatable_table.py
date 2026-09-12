@@ -127,6 +127,16 @@ class DatatableTable:
     def view_filter(query, table):
         return query
 
+    def base_queryset(self):
+        """Starting queryset for get_query().
+
+        Override in a subclass to start from a queryset that already carries per-request
+        annotations, so columns can use them as plain fields (sortable, searchable and usable
+        by the server-side filters). Everything get_query() adds - column annotations,
+        filter/exclude, values(), ordering, view_filter - is applied on top of it.
+        """
+        return getattr(self.model, self.query_manager)
+
     def get_query(self, **_kwargs):
         annotations = {}
         annotations_value = {}
@@ -138,7 +148,7 @@ class DatatableTable:
                 annotations_value.update(c.annotations_value)
             if c.aggregations:
                 aggregations.update(c.aggregations)
-        query = getattr(self.model, self.query_manager)
+        query = self.base_queryset()
         # Use initial values to group_by for annotations
         if self.initial_values:
             query = query.values(*self.initial_values)

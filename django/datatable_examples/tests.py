@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from ajax_helpers.mixins import AjaxHelpers
 from django.contrib.auth.models import AnonymousUser
 from django.db.models import Q
+from django.db.models.functions import Upper
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
@@ -459,6 +460,43 @@ class TestServerSideViewAttribute(TestCase):
         view = MixedView()
         view.add_table('client_table', model=Person, table_class=DatatableTable)
         self.assertNotIsInstance(view.tables['client_table'], ServerSideTable)
+
+
+class TestBaseQuerysetHook(TestCase):
+    """base_queryset() lets a table start from an annotated queryset whose annotations then
+    behave as plain fields: in the row data, for ordering, and for the server-side filters."""
+
+    def setUp(self):
+        make_data()
+
+    def test_default_is_the_model_manager(self):
+        table = DatatableTable('people', model=Person)
+        self.assertIs(table.base_queryset().model, Person)
+        self.assertEqual(table.base_queryset().count(), Person.objects.count())
+
+    def test_annotation_from_base_queryset_is_a_plain_field(self):
+        class AnnotatedTable(ServerSideTable):
+            def base_queryset(self):
+                return Person.objects.annotate(company_upper=Upper('company__name'))
+
+        table = AnnotatedTable('annotated', model=Person)
+        table.add_columns('id', 'first_name', 'company_upper')
+        rows = list(table.get_query())
+        self.assertEqual(len(rows), Person.objects.count())
+        for row in rows:
+            person = Person.objects.select_related('company').get(pk=row['id'])
+            self.assertEqual(row['company_upper'], person.company.name.upper())
+        self.assertEqual(table._build_ordering({'order[0][column]': '2', 'order[0][dir]': 'desc'}),
+                         ['-company_upper'])
+        table.add_js_filters('pivot', 'company_upper')
+        pivot = table.js_filter_list[-1]
+        self.assertIsInstance(pivot, ServerPivotFilter)
+        base = table.get_query()
+        filtered = pivot.apply_filter(base, {'values': ['ACME']})
+        self.assertEqual({r['company_upper'] for r in filtered}, {'ACME'})
+        facets = pivot.get_facets(base, filtered)
+        self.assertEqual(facets['ACME'][0], facets['ACME'][1])
+        self.assertEqual(sum(v[1] for v in facets.values()), Person.objects.count())
 
 
 class TestServerSideResponse(TestCase):
