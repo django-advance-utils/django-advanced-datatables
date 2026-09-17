@@ -947,7 +947,6 @@ if (typeof django_datatables === 'undefined') {
                 /*  stripeClasses:['a', 'a'], */
                 orderCellsTop: true,
                 pageLength: 25,
-                fixedHeader: true,
                 orderClasses: false,
                 stateSave: true,
                 deferRender: true,
