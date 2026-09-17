@@ -9,7 +9,7 @@ except PackageNotFoundError:
 
 
 class DataTables(SourceBase):
-    cdn_path = 'cdn.datatables.net/v/dt/dt-1.10.18/b-1.5.6/b-html5-1.5.6/rg-1.1.0/rr-1.2.4/'
+    cdn_path = 'cdn.datatables.net/v/dt/dt-3.0.2/rg-2.0.0/rr-2.0.0/'
     filename = 'datatables.min'
     static_path = 'django_datatables/datatables/'
     cdn_js_path = ''
@@ -22,15 +22,10 @@ class FilteredDataTables(SourceBase):
     css_filename = 'datatables.css'
 
 
+# DataTable.datetime() uses Moment to parse formatted dates for sorting
 class Moment(SourceBase):
-    cdn_path = 'cdnjs.cloudflare.com/ajax/libs/moment.js/2.8.4/'
+    cdn_path = 'cdnjs.cloudflare.com/ajax/libs/moment.js/2.30.1/'
     js_filename = 'moment.min.js'
-    cdn_js_path = ''
-
-
-class MomentDatatable(SourceBase):
-    cdn_path = 'cdn.datatables.net/plug-ins/1.10.16/sorting/'
-    js_filename = 'datetime-moment.js'
     cdn_js_path = ''
 
 
@@ -54,6 +49,6 @@ class Spreadsheet(SourceBase):
 
 
 packages = {
-    'datatable': [DataTables, FilteredDataTables, Moment, MomentDatatable],
+    'datatable': [DataTables, FilteredDataTables, Moment],
     'JSpreadsheet': [JSpreadsheet, JSuites]
 }

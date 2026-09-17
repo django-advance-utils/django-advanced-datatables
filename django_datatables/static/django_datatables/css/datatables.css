@@ -27,11 +27,11 @@
     position: relative
 }
 
-.dataTables_wrapper td select{
+.dt-container td select{
     width: 100%;
 }
 
-.dataTables_wrapper td .select2{
+.dt-container td .select2{
     margin: -5px!important;
 }
 

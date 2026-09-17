@@ -89,7 +89,7 @@ class DatatableTable:
     def moment_formats_js(self):
         if not self.date_formats:
             return ''
-        lines = [f'$.fn.dataTable.moment("{fmt}");' for fmt in sorted(self.date_formats)]
+        lines = [f'DataTable.datetime("{fmt}");' for fmt in sorted(self.date_formats)]
         return mark_safe('\n            '.join(lines))
 
     def table_class(self):

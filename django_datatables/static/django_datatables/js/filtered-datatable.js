@@ -32,7 +32,7 @@ if (typeof django_datatables === 'undefined') {
         function column_select(button) {
             var table_id = $(button).closest('table').attr('id');
             if(table_id === undefined) {
-                var table = $(button).closest('table').closest('.dataTables_wrapper').find('.dataTables_scrollBody table.display');
+                var table = $(button).closest('table').closest('.dt-container').find('.dt-scroll-body table.display');
                 table_id = table.attr('id');
             }
 
@@ -205,9 +205,9 @@ if (typeof django_datatables === 'undefined') {
         }
 
         var columnsearch = function (settings, data, dataIndex, row_data) {
-            if (settings.sTableId in DataTables) {
-                for (var f = 0; f < DataTables[settings.sTableId].filters.length; f++) {
-                    if (!DataTables[settings.sTableId].filters[f].filter(row_data)) return false
+            if (settings.tableId in DataTables) {
+                for (var f = 0; f < DataTables[settings.tableId].filters.length; f++) {
+                    if (!DataTables[settings.tableId].filters[f].filter(row_data)) return false
                 }
                 return true
             }
@@ -859,7 +859,10 @@ if (typeof django_datatables === 'undefined') {
             }
 
             this.postInit = function () {
-                this.table = $('#' + html_id).dataTable()
+                this.table = $('#' + html_id)
+                // DataTables 3's legacy $().dataTable().api() is bound to no table, so bind it here.
+                var api = this.table.DataTable()
+                this.table.api = function () { return api }
                 for (var c=0; c<this.initsetup.colOptions.length;c++){
                     this.table.api().column(c).visible(this.initsetup.colOptions[c].hidden != true, false)
                 }
@@ -950,7 +953,7 @@ if (typeof django_datatables === 'undefined') {
                 orderClasses: false,
                 stateSave: true,
                 deferRender: true,
-                dom: 'rtip',
+                layout: {topStart: null, topEnd: null, bottomStart: 'info', bottomEnd: 'paging'},
                 initComplete: this.postInit,
                 stateSaveCallback: this.set_key,
                 stateLoadCallback: this.get_key,
@@ -962,7 +965,8 @@ if (typeof django_datatables === 'undefined') {
                 if (tablesetup.tableOptions.ajax_url !== undefined){
                     url = tablesetup.tableOptions.ajax_url
                 } else {
-                    url = window.location.search
+                    // DataTables 3 loads nothing for an empty url, so never pass just an empty query string
+                    url = window.location.pathname + window.location.search
                 }
                 if (tablesetup.tableOptions.serverSide) {
                     // Server-side mode: DataTables generates draw/start/length/search/order
@@ -970,6 +974,7 @@ if (typeof django_datatables === 'undefined') {
                     dataTable_setup.ajax = {
                         'url': url,
                         "type": "POST",
+                        "cache": true,
                         "data": function (d) {
                             d.csrfmiddlewaretoken = csrf;
                             d.table_id = html_id;
@@ -993,6 +998,7 @@ if (typeof django_datatables === 'undefined') {
                     dataTable_setup.ajax = {
                         'url': url,
                         "type": "POST",
+                        "cache": true,
                         "data": {"csrfmiddlewaretoken": csrf, table_id: html_id, datatable_data: true}
                     }
                 }
@@ -1241,6 +1247,6 @@ function rep_options(html, option_dict) {
 
 
 $(document).ready(function () {
-    $.fn.dataTable.moment("DD/MM/YYYY");
-    $.fn.dataTable.moment("DD/MM/YYYY HH:mm");
+    DataTable.datetime("DD/MM/YYYY");
+    DataTable.datetime("DD/MM/YYYY HH:mm");
 });

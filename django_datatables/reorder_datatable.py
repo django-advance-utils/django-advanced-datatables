@@ -15,7 +15,7 @@ class OrderedDatatable(DatatableTable):
     def __init__(self, *args, order_field=None, **kwargs):
         self.order_field = order_field
         table_options = {
-            'dom': 't',
+            'layout': {'topStart': None, 'topEnd': None, 'bottomStart': None, 'bottomEnd': None},
             'no_col_search': True,
             'no_footer': True,
             'pageLength': 400,

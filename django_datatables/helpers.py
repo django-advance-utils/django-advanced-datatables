@@ -8,7 +8,7 @@ DUMMY_ID = 999999
 DUMMY_ID2 = 888888
 
 simple_table = {
-    'dom': 't',
+    'layout': {'topStart': None, 'topEnd': None, 'bottomStart': None, 'bottomEnd': None},
     'no_col_search': True,
     'no_footer': True,
     'pageLength': 400,
@@ -16,7 +16,7 @@ simple_table = {
 }
 
 note_table_options = {
-    'dom': 'trip',
+    'layout': {'topStart': None, 'topEnd': None, 'bottomStart': 'info', 'bottomEnd': 'paging'},
     'no_col_search': True,
     'no_footer': True,
     'pageLength': 50,
