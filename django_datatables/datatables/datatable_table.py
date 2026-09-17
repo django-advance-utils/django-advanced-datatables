@@ -11,7 +11,7 @@ from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
 from django_menus.menu import MenuItem, HtmlMenu
 
-from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY
+from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY, STATE_VERSION
 from django_datatables.datatables.column_initialiser import ColumnInitialisor
 from django_datatables.datatables.datatable_error import DatatableError
 from django_datatables.filters import DatatableFilter
@@ -224,9 +224,11 @@ class DatatableTable:
 
     def session_or_default_state(self):
         try:
-            return json.loads(self.session_or_default.state) if self.session_or_default else None
-        except json.JSONDecodeError:
-            pass
+            state = json.loads(self.session_or_default.state) if self.session_or_default else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(state, dict) and state.get('state_version') == STATE_VERSION:
+            return state
 
     def session_column_visibility(self):
         return self.session_or_default.column_visibility if self.session_or_default else {}
@@ -344,6 +346,7 @@ class DatatableTable:
             'colOptions': [c.options for c in self.columns],
             'tableOptions': options,
             'local_storage_key': self.local_storage_key,
+            'state_version': STATE_VERSION,
         }
         if self.session_or_default:
             table_vars['state'] = self.session_or_default_state()

@@ -872,6 +872,7 @@ if (typeof django_datatables === 'undefined') {
                         data.columns[c].visible = this.initsetup.colOptions[c].hidden != true;
                     }
                     data['session_id'] = tablesetup.session_id
+                    data['state_version'] = tablesetup.state_version
                 }.bind(this))
                 if (typeof (django_datatables.setup[html_id].filters) !== 'undefined') {
                     this.filters = django_datatables.setup[html_id].filters
@@ -939,7 +940,7 @@ if (typeof django_datatables === 'undefined') {
                 var data = localStorage.getItem(tablesetup.local_storage_key);
                 if (data) {
                     data = JSON.parse(data);
-                    if (tablesetup.session_id == data.session_id) {
+                    if (tablesetup.session_id == data.session_id && tablesetup.state_version == data.state_version) {
                         return data;
                     }
                 }
