@@ -203,7 +203,13 @@ class ServerValuesFilter(ServerDatatableFilter):
         for row in totals:
             entry = facets.setdefault(self.value_to_key(row[self.field]), [0, 0])
             entry[1] += self._facet_value(row)
-        for row in filtered_queryset.values(self.field).annotate(_facet_count=self._facet_annotation()).order_by():
+        # Nothing searched or filtered: the filtered counts are the totals, so skip the second GROUP BY.
+        if filtered_queryset is base_queryset:
+            filtered_rows = totals
+        else:
+            filtered_rows = filtered_queryset.values(self.field).annotate(
+                _facet_count=self._facet_annotation()).order_by()
+        for row in filtered_rows:
             entry = facets.setdefault(self.value_to_key(row[self.field]), [0, 0])
             entry[0] += self._facet_value(row)
         return facets

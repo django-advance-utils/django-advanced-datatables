@@ -985,7 +985,12 @@ if (typeof django_datatables === 'undefined') {
                             }
                             if (signature !== p_table.last_filter_signature) {
                                 p_table.last_filter_signature = signature;
-                                d.need_facets = 1;
+                                if (tablesetup.tableOptions.deferred_facets) {
+                                    // fetched in their own request once the rows are back (xhr.dt below)
+                                    p_table.facets_request = Object.assign({}, d, {facets_only: 1});
+                                } else {
+                                    d.need_facets = 1;
+                                }
                             }
                             return d;
                         }
@@ -1046,14 +1051,13 @@ if (typeof django_datatables === 'undefined') {
                 if (json.ajax_commands != undefined){
                     ajax_helpers.process_commands(json.ajax_commands)
                 }
+                var p_table = django_datatables.DataTables[html_id];
                 if (json.facets != undefined) {
-                    var p_table = django_datatables.DataTables[html_id];
-                    if (p_table.table) {
-                        p_table.apply_facets(json.facets)
-                    } else {
-                        // First response arrives before initComplete; postInit drains this.
-                        p_table.pending_facets = json.facets
-                    }
+                    p_table.receive_facets(json.facets)
+                }
+                if (p_table.facets_request) {
+                    p_table.request_facets(url, p_table.facets_request)
+                    p_table.facets_request = null
                 }
             })
             if (this.initsetup.tableOptions.row_href) {
@@ -1138,6 +1142,25 @@ if (typeof django_datatables === 'undefined') {
                 }
             }
             return state
+        }
+
+        PythonTable.prototype.receive_facets = function (facets) {
+            if (this.table) {
+                this.apply_facets(facets)
+            } else {
+                // First response arrives before initComplete; postInit drains this.
+                this.pending_facets = facets
+            }
+        }
+
+        // deferred_facets: the draw returned only rows, so fetch the counts for the same state.
+        PythonTable.prototype.request_facets = function (url, data) {
+            var sequence = this.facets_sequence = (this.facets_sequence || 0) + 1
+            $.ajax({url: url, type: 'POST', data: data, dataType: 'json'}).done(function (json) {
+                // a later filter change has already asked again; these counts are stale
+                if (sequence !== this.facets_sequence || json.facets == undefined) return
+                this.receive_facets(json.facets)
+            }.bind(this))
         }
 
         PythonTable.prototype.apply_facets = function (facets) {

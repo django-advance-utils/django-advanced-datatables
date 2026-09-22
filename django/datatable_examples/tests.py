@@ -524,6 +524,57 @@ class TestBaseQuerysetHook(TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class TestDeferredFacets(TestCase):
+    """deferred_facets keeps the GROUP BY queries out of the draw; a facets_only request returns them."""
+
+    def setUp(self):
+        make_data()
+        self.request = RequestFactory().get('/')
+
+    @staticmethod
+    def make(deferred):
+        class Table(ServerSideTable):
+            deferred_facets = deferred
+
+        table = Table('deferred', model=Person)
+        table.add_columns('id', 'first_name', 'company__name')
+        table.add_js_filters('pivot', 'company__name')
+        return table
+
+    def response(self, table, **post):
+        data = {'draw': '1', 'start': '0', 'length': '10', **post}
+        return json.loads(table.get_server_side_json(self.request, table.get_query(), data))
+
+    def test_default_draw_carries_facets(self):
+        table = self.make(False)
+        self.assertNotIn('deferred_facets', table.table_options)
+        self.assertIn('facets', self.response(table))
+
+    def test_deferred_draw_has_rows_but_no_facets(self):
+        table = self.make(True)
+        self.assertTrue(table.table_options['deferred_facets'])
+        result = self.response(table, need_facets='1')
+        self.assertNotIn('facets', result)
+        self.assertEqual(len(result['data']), Person.objects.count())
+
+    def test_facets_only_request(self):
+        result = self.response(self.make(True), facets_only='1')
+        self.assertEqual(set(result), {'facets'})
+        self.assertEqual(result['facets']['company__name'], {'Acme': [2, 2], 'Beta': [1, 1], 'null': [1, 1]})
+
+    def test_facets_only_request_applies_the_js_filters(self):
+        state = json.dumps({'company__name': {'values': ['Acme']}})
+        result = self.response(self.make(True), facets_only='1', js_filter_state=state)
+        self.assertEqual(result['facets']['company__name'], {'Acme': [2, 2], 'Beta': [0, 1], 'null': [0, 1]})
+
+    def test_unfiltered_facets_skip_the_second_group_by(self):
+        table = self.make(True)
+        base = table.get_query()
+        with self.assertNumQueries(1):
+            facets = table.js_filter_list[-1].get_facets(base, base)
+        self.assertEqual(facets, {'Acme': [2, 2], 'Beta': [1, 1], 'null': [1, 1]})
+
+
 class TestServerSideResponse(TestCase):
     """Simulated DataTables requests through the demo view."""
 

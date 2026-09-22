@@ -128,9 +128,16 @@ class ServerSideTable(DatatableTable):
     carries a ``facets`` key.  Paging and sorting never trigger the aggregate
     queries.  Each state change costs two GROUP BY queries per counted facet
     (totals on the base queryset, filtered counts on the searched/filtered
-    queryset).  Columns with more distinct values than ``max_facet_values``
-    (default 200, pass as a kwarg to ``add_js_filters``) skip counts and show
-    a message instead.
+    queryset); with no search or filter active the second query is skipped.
+    Columns with more distinct values than ``max_facet_values`` (default 200,
+    pass as a kwarg to ``add_js_filters``) skip counts and show a message
+    instead.
+
+    On a big table the GROUP BY queries can take seconds while the page of
+    rows takes milliseconds.  Set ``deferred_facets = True`` to keep them out
+    of the draw: the rows come back straight away and the client fetches the
+    counts in a second request (``facets_only=1``) that returns only the
+    ``facets`` key.  Override ``_build_facets`` to cache them.
 
     Excel download
     --------------
@@ -145,9 +152,8 @@ class ServerSideTable(DatatableTable):
     -----------
     * The ``expand`` and ``selected`` JS filters are not supported
       server-side; requesting one raises ``DatatableError``.
-    * Facet totals are recomputed on every filter/search change; caching them
-      (e.g. in Redis via ``django_datatables.cache``) is possible future work
-      for very large tables.
+    * Facet totals are recomputed on every filter/search change unless a
+      subclass caches them in ``_build_facets``.
     * ``ColumnTotalsPlugin`` footer sums only cover the current page.
     """
 
@@ -168,10 +174,16 @@ class ServerSideTable(DatatableTable):
     # recordsTotal instead of COUNT(*).  Ignored on non-PostgreSQL databases.
     approximate_count = False
 
+    # Set True to fetch the js filter counts in a separate request after the rows
+    # (see "JS filters" above) instead of inside the draw.
+    deferred_facets = False
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Tell DataTables.js to operate in server-side mode.
         self.table_options['serverSide'] = True
+        if self.deferred_facets:
+            self.table_options['deferred_facets'] = True
 
     # ------------------------------------------------------------------
     # JS filters
@@ -340,6 +352,12 @@ class ServerSideTable(DatatableTable):
         post_data:
             ``request.POST`` (or equivalent mapping).
         """
+        if post_data.get('facets_only'):
+            # The deferred_facets follow-up to a draw: the counts only, no rows.
+            filtered_queryset, _ = self._search_and_filter(queryset, post_data)
+            result = {'facets': self._build_facets(queryset, filtered_queryset)}
+            return json.dumps(result, separators=(',', ':'), default=str)
+
         draw = int(post_data.get('draw', 1))
         start = int(post_data.get('start', 0))
         length = int(post_data.get('length', 25))
@@ -352,35 +370,16 @@ class ServerSideTable(DatatableTable):
 
         # Base queryset (view filters only) feeds facet totals.
         base_queryset = queryset
-        js_filter_state = self._parse_js_filter_state(post_data)
         # The client asks for facet counts only when the filter/search state
-        # changed; paging and sorting draws skip the aggregate queries.
-        need_facets = post_data.get('need_facets') == '1' or draw == 1
+        # changed; paging and sorting draws skip the aggregate queries.  With
+        # deferred_facets it asks in a separate facets_only request instead.
+        need_facets = not self.deferred_facets and (post_data.get('need_facets') == '1' or draw == 1)
 
         # Total records matching the view's base filters (not the user search).
         # Use the fast approximate estimate when requested, otherwise COUNT(*).
         records_total = self._count_total(queryset)
 
-        # Detect whether any search filter is active.
-        search_value = post_data.get('search[value]', '').strip()
-        n_columns = sum(1 for k in post_data if k.startswith('columns[') and k.endswith('][name]'))
-        has_column_search = any(
-            post_data.get(f'columns[{i}][search][value]', '').strip()
-            for i in range(n_columns)
-        )
-        search_active = bool(search_value or has_column_search)
-
-        # Apply the global search box value.
-        if search_value:
-            queryset = self._apply_global_search(queryset, search_value)
-
-        # Apply per-column search values (from column-header input boxes).
-        if has_column_search:
-            queryset = self._apply_column_searches(queryset, post_data)
-
-        # Apply the js filter selections (pivot/select2/date filter blocks).
-        queryset, js_filters_applied = self._apply_js_filters(queryset, js_filter_state)
-        filters_active = search_active or js_filters_applied
+        queryset, filters_active = self._search_and_filter(queryset, post_data)
 
         # Count after search/filter for the "x of y records" footer.
         # Skip the second COUNT when nothing is being filtered — it equals total.
@@ -416,6 +415,31 @@ class ServerSideTable(DatatableTable):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _search_and_filter(self, queryset, post_data):
+        """Apply the global search, column searches and js filters; returns (queryset, filters_active).
+
+        With nothing active the same queryset object comes back, which lets the
+        facets skip their filtered GROUP BY and the draw skip its second COUNT.
+        """
+        search_value = post_data.get('search[value]', '').strip()
+        n_columns = sum(1 for k in post_data if k.startswith('columns[') and k.endswith('][name]'))
+        has_column_search = any(
+            post_data.get(f'columns[{i}][search][value]', '').strip()
+            for i in range(n_columns)
+        )
+
+        # Apply the global search box value.
+        if search_value:
+            queryset = self._apply_global_search(queryset, search_value)
+
+        # Apply per-column search values (from column-header input boxes).
+        if has_column_search:
+            queryset = self._apply_column_searches(queryset, post_data)
+
+        # Apply the js filter selections (pivot/select2/date filter blocks).
+        queryset, js_filters_applied = self._apply_js_filters(queryset, self._parse_js_filter_state(post_data))
+        return queryset, bool(search_value or has_column_search or js_filters_applied)
 
     def _count_filtered(self, queryset):
         """Return the row count after search / js filters (``recordsFiltered``).
