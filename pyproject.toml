@@ -3,15 +3,16 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "django-filtered-datatables"
+name = "django-advanced-datatables"
 version = "0.1.3"
 description = "Django views with javascript filters using Datatables"
-readme = "readme.md"
+readme = "README.md"
 license = "MIT"
 authors = [{ name = "Ian Jones" }]
+maintainers = [{ name = "Thomas Turner" }]
 requires-python = ">=3.6"
 dependencies = [
-    "django-ajax-helpers>=0.0.16",
+    "ajax-advanced-helpers>=1.0.1",
     "django-tab-menus",
     "django-nested-modals",
 ]
@@ -24,7 +25,8 @@ classifiers = [
 excel = ["openpyxl"]
 
 [project.urls]
-Homepage = "https://github.com/jonesim/django-datatables"
+Homepage = "https://github.com/django-advance-utils/django-advanced-datatables"
+Upstream = "https://github.com/jonesim/django-datatables"
 
 [tool.setuptools.packages.find]
 include = ["django_datatables", "django_datatables.*"]

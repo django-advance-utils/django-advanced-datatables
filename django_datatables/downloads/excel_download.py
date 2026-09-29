@@ -51,7 +51,7 @@ class ExcelDownload:
         if Workbook is None:
             raise ImportError(
                 "Excel download requires openpyxl. Install it with "
-                "'pip install django-filtered-datatables[excel]' or 'pip install openpyxl'."
+                "'pip install django-advanced-datatables[excel]' or 'pip install openpyxl'."
             )
         workbook = Workbook()
         sheet = workbook.active

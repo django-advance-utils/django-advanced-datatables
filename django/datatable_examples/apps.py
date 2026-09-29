@@ -4,6 +4,6 @@ from show_src_code.apps import PypiAppConfig
 class DatatableExampleConfig(PypiAppConfig):
     default = True
     name = 'datatable_examples'
-    pypi = 'django-filtered-datatables'
+    pypi = 'django-advanced-datatables'
     urls = 'datatable_examples.urls'
     default_auto_field = 'django.db.models.AutoField'

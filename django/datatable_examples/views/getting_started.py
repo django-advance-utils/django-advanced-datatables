@@ -27,7 +27,7 @@ class ManualIndex(ManualPage, TemplateView):
         context['chapters'] = [{'title': chapter.title, 'menu': self.menus[f'chapter_{no}']}
                                for no, chapter in enumerate(CHAPTERS)]
         context['description'] = (
-            'A tour of <b>django-datatables</b> (PyPI: <code>django-filtered-datatables</code>) — '
+            'A tour of <b>django-datatables</b> (PyPI: <code>django-advanced-datatables</code>) — '
             'server-backed DataTables.js tables for Django with filtering, sorting, inline editing, '
             'state persistence and Excel export. Every page demonstrates one feature with a live table, '
             'an explanation, the key code inline, and the full view source behind the '

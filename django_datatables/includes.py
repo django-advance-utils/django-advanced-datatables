@@ -3,7 +3,7 @@ from importlib.metadata import PackageNotFoundError
 from ajax_helpers.html_include import SourceBase, pip_version
 
 try:
-    version = pip_version('django-filtered-datatables')
+    version = pip_version('django-advanced-datatables')
 except PackageNotFoundError:
     version = 'local'
 

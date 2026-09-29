@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/django-filtered-datatables   # your PyPI project name
+      url: https://pypi.org/p/django-advanced-datatables
     permissions:
       id-token: write        # mandatory for trusted publishing
     steps:

@@ -1,5 +1,5 @@
 """
-Playwright end-to-end tests for django-filtered-datatables.
+Playwright end-to-end tests for django-advanced-datatables.
 
 Covers: table rendering, data display, column types, pagination,
         two-table views, annotations, filters, sorting, search boxes,

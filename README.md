@@ -1,6 +1,12 @@
-[![PyPI version](https://badge.fury.io/py/django-filtered-datatables.svg)](https://badge.fury.io/py/django-filtered-datatables)
+[![PyPI version](https://badge.fury.io/py/django-advanced-datatables.svg)](https://badge.fury.io/py/django-advanced-datatables)
 
-# django-filtered-datatables
+# django-advanced-datatables
+
+The [django-advance-utils](https://github.com/django-advance-utils) line of Ian Jones's
+[django-filtered-datatables](https://github.com/jonesim/django-datatables), forked so that releases can be
+cut as the downstream libraries and django-advanced-report-builder need them. The Python package
+is still `django_datatables`, so existing imports and `INSTALLED_APPS` entries do not change; only the
+pip name does. It depends on [ajax-advanced-helpers](https://github.com/django-advance-utils/ajax-advanced-helpers).
 
 A Django library for building interactive data tables powered by [DataTables.js](https://datatables.net/), with server-side processing, dynamic JavaScript filters, inline editing, and a rich plugin system.
 
@@ -28,7 +34,7 @@ Define your tables in Python using Django models and ORM queries -- columns, fil
 ## Installation
 
 ```bash
-pip install django-filtered-datatables
+pip install django-advanced-datatables
 ```
 
 Add to your `INSTALLED_APPS`:
@@ -366,7 +372,7 @@ Then visit [http://localhost:8006](http://localhost:8006).
 
 - Python >= 3.6
 - Django
-- [django-ajax-helpers](https://github.com/jonesim/django-ajax-helpers) >= 0.0.16
+- [ajax-advanced-helpers](https://github.com/django-advance-utils/ajax-advanced-helpers) >= 1.0.1
 
 Optional:
 - `openpyxl` -- for Excel export
