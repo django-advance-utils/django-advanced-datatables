@@ -1,14 +1,12 @@
 Django==5.0.4
 ajax-advanced-helpers==1.0.1
 django-crispy-forms==1.14.0
-django-tab-menus @ git+https://github.com/jonesim/django-menus
+django-advanced-menus==1.0.0
 django-show-source-code==0.0.8
-#django-nested-modals==0.0.23
-django-nested-modals @ git+https://github.com/jonesim/django-modals@5fa75c0a44b14624032d7f96936a852f441cae85
+django-advanced-modals==1.0.0
 
-#git+https://github.com/jonesim/django-modals.git@a403c80476ac9bb108ba7d7d5498a1e1b0892d16
-modal-examples @ git+https://github.com/jonesim/django-modals@2b784ba1879bb44a972513848a764f85a01c0115#subdirectory=django_examples
-menu-examples @ git+https://github.com/jonesim/django-menus#subdirectory=django_examples
+modal-examples @ git+https://github.com/django-advance-utils/django-advanced-modals@18262a6960b3afe0bd369511c603797aacf55508#subdirectory=django_examples
+menu-examples @ git+https://github.com/django-advance-utils/django-advanced-menus@dd3f3a1e40bb6ace1dd40fc49cdd2b5b5768b2ac#subdirectory=django_examples
 ajax-examples @ git+https://github.com/django-advance-utils/ajax-advanced-helpers#subdirectory=django_examples
 openpyxl==3.0.9
 psycopg2==2.9.3

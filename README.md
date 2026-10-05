@@ -1,4 +1,4 @@
-[![PyPI version](https://badge.fury.io/py/django-advanced-datatables.svg)](https://badge.fury.io/py/django-advanced-datatables)
+[![PyPI version](https://img.shields.io/pypi/v/django-advanced-datatables)](https://pypi.org/project/django-advanced-datatables/)
 
 # django-advanced-datatables
 
@@ -6,7 +6,9 @@ The [django-advance-utils](https://github.com/django-advance-utils) line of Ian 
 [django-filtered-datatables](https://github.com/jonesim/django-datatables), forked so that releases can be
 cut as the downstream libraries and django-advanced-report-builder need them. The Python package
 is still `django_datatables`, so existing imports and `INSTALLED_APPS` entries do not change; only the
-pip name does. It depends on [ajax-advanced-helpers](https://github.com/django-advance-utils/ajax-advanced-helpers).
+pip name does. It depends on [ajax-advanced-helpers](https://github.com/django-advance-utils/ajax-advanced-helpers),
+[django-advanced-menus](https://github.com/django-advance-utils/django-advanced-menus) and
+[django-advanced-modals](https://github.com/django-advance-utils/django-advanced-modals).
 
 A Django library for building interactive data tables powered by [DataTables.js](https://datatables.net/), with server-side processing, dynamic JavaScript filters, inline editing, and a rich plugin system.
 
