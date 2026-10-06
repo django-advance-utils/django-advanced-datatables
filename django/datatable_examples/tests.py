@@ -738,6 +738,33 @@ class TestFilteredQuery(TestCase):
         self.assertEqual([r['surname'] for r in results], ['Smith', 'Jones'])
 
 
+class TestSavedStateWithoutARequest(TestCase):
+    """A saved column order or visibility belongs to a user. A table whose view has no request -- the table a tree
+    grid builds for its rows, an export, a test -- has none, and is built rather than failing in add_columns()."""
+
+    class NoRequestView:
+        pass
+
+    def test_a_view_without_a_request_has_no_saved_state(self):
+        table = DatatableTable('people', model=Person, view=self.NoRequestView())
+        table.add_columns('id', 'first_name')
+        self.assertEqual([c.column_name for c in table.columns], ['id', 'first_name'])
+        self.assertIsNone(table.get_saved_state('_session'))
+
+    def test_a_table_without_a_view_has_no_saved_state(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        self.assertIsNone(table.get_saved_state('_default'))
+
+    def test_a_request_with_a_user_still_reads_theirs(self):
+        view = self.NoRequestView()
+        view.request = RequestFactory().get('/')
+        view.request.user = AnonymousUser()
+        table = DatatableTable('people', model=Person, view=view)
+        table.add_columns('id', 'first_name')
+        self.assertIsNone(table.get_saved_state('_session'))
+
+
 def make_link_table(**link_kwargs):
     """Server-side table with a list-field ColumnLink (id -> URL, surname -> display).
     person_link is column index 2."""

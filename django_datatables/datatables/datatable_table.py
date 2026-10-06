@@ -235,9 +235,14 @@ class DatatableTable:
         return self.session_or_default.column_order if self.session_or_default else None
 
     def get_saved_state(self, name):
-        if self.view:
-            return SavedState.objects.filter(name=name, user_id=self.view.request.user.id,
-                                             table_id=self.table_id, view_class=self.view.__class__.__name__).first()
+        # A saved column order or visibility belongs to a user, so a table with no request behind it -- one a
+        # tree grid builds for its rows, an export, a test -- has none, rather than failing to be built. Every
+        # add_columns() asks for it.
+        user = getattr(getattr(self.view, 'request', None), 'user', None)
+        if user is None:
+            return None
+        return SavedState.objects.filter(name=name, user_id=user.id,
+                                         table_id=self.table_id, view_class=self.view.__class__.__name__).first()
 
     def show_column(self, column):
         if not column.enabled:
