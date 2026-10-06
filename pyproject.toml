@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "django-advanced-datatables"
-version = "1.0.0"
+version = "1.0.1"
 description = "Django views with javascript filters using Datatables"
 readme = "README.md"
 license = "MIT"
