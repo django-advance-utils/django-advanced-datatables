@@ -7,7 +7,7 @@ from datatable_examples.views import (columns, downloads, editing, filters, gett
 urlpatterns = [
     path('', getting_started.ManualIndex.as_view(), name='manual_index'),
     path('datatable-redirect/', RedirectView.as_view(pattern_name='manual_index'),
-         name='django-filtered-datatables'),
+         name='django-advanced-datatables'),
 
     # Reference docs - standalone, not a manual chapter
     path('reference/columns', reference.ColumnReference.as_view(), name='column_reference'),
