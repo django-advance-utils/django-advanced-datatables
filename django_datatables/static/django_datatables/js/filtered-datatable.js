@@ -162,6 +162,11 @@ if (typeof django_datatables === 'undefined') {
             DataTables[command.table_id].table.api().ajax.reload(null, false);
             $('#' + command.table_id).off('xhr.dt')
             $('#' + command.table_id).on('xhr.dt', function (e, settings, json, xhr) {
+                // DataTables fires xhr.dt with no json when the request was aborted or failed --
+                // a page that moves on mid-load aborts it -- and there is nothing to act on.
+                if (!json) {
+                    return;
+                }
                 if (json.ajax_commands != undefined){
                     ajax_helpers.process_commands(json.ajax_commands)
                 }
@@ -1048,6 +1053,11 @@ if (typeof django_datatables === 'undefined') {
 
             $('#' + this.table_id).dataTable(dataTable_setup);
             $('#' + this.table_id).on('xhr.dt', function (e, settings, json, xhr) {
+                // DataTables fires xhr.dt with no json when the request was aborted or failed --
+                // a page that moves on mid-load aborts it -- and there is nothing to act on.
+                if (!json) {
+                    return;
+                }
                 if (json.ajax_commands != undefined){
                     ajax_helpers.process_commands(json.ajax_commands)
                 }
