@@ -207,6 +207,12 @@
     will-change: width;
 }
 
+/* Clipped only while it is collapsed or sliding open or shut. Open and at rest it must not clip, or a menu
+   opened inside it -- the selection menu's dropdown -- is cut off at the panel's edge. */
+.side-filter:not(.fb-collapsed):not(.fb-sliding) {
+    overflow: visible;
+}
+
 .collapsed-bar {
     width: 22px;
     color: white;

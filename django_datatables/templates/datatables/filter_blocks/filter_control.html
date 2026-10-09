@@ -46,6 +46,15 @@
             show_hide_filter_block('{{ datatable.table_id }}', {% if datatable.hidden_side_bar %}false{% else %}true{% endif %})
         }
         function show_hide_filter_block(table_id, show, save_state) {
+            var block = $('#fb-' + table_id);
+            if (block.hasClass('fb-collapsed') === show) {
+                // Clip while the width slides; the panel only overflows once it has come to rest open.
+                block.addClass('fb-sliding');
+                clearTimeout(block.data('fb-sliding'));
+                block.data('fb-sliding', setTimeout(function () {
+                    block.removeClass('fb-sliding');
+                }, 350));
+            }
             if (show) {
                 $('#fb-c-' + table_id).addClass('fb-collapsed');
                 $('#fb-' + table_id).removeClass('fb-collapsed');
