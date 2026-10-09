@@ -213,6 +213,12 @@
     overflow: visible;
 }
 
+/* With the panel no longer clipping, a filter value with nowhere to wrap (an email address, a long reference)
+   would run out of it over the grid. Let it break anywhere instead. */
+.side-filter .form-check-label {
+    overflow-wrap: anywhere;
+}
+
 .collapsed-bar {
     width: 22px;
     color: white;
