@@ -123,8 +123,25 @@ if (typeof django_datatables === 'undefined') {
             DataTables[command.table_id].table.api().draw(false)
         }
 
+        function shown_selected(table_id) {
+            // The selected rows the filters still show. A selection outlives a change of filter -- which is
+            // what lets a picker gather rows from several searches -- so "Select all" followed by filtering
+            // some rows away leaves those rows selected but out of sight. A server-side table holds only the
+            // current page and cannot tell a filtered-out row from one on another page, so it keeps them all.
+            var datatable = django_datatables.DataTables[table_id];
+            if (datatable.initsetup.tableOptions.serverSide) {
+                return datatable.selected;
+            }
+            var shown = datatable.table.api().column(0, {"filter": "applied"}).data().toArray().map(String);
+            return datatable.selected.filter(function (id) {
+                return shown.indexOf(String(id)) !== -1;
+            });
+        }
+
         ajax_helpers.command_functions.send_selected = function (command) {
-            var ids = django_datatables.DataTables[command.table_id].selected;
+            // shown_only: act on what the user can see, for a bulk action on a list rather than a picker.
+            var ids = command.shown_only ? shown_selected(command.table_id)
+                : django_datatables.DataTables[command.table_id].selected;
             if (command.data === undefined) {
                 data = {};
             } else {
@@ -1260,6 +1277,7 @@ if (typeof django_datatables === 'undefined') {
             row_send,
             column_select,
             select_item,
+            shown_selected,
         }
     }()
 }
