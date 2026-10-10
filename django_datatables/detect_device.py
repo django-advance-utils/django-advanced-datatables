@@ -1,5 +1,5 @@
-
 def detect_device(request):
-    if 'android' in request.META['HTTP_USER_AGENT'].lower() or 'iphone' in request.META['HTTP_USER_AGENT'].lower():
-        return {'mobile':True}
-    return {'mobile': False}
+    # A request need not send a User-Agent (curl, monitoring checks, some
+    # bots), so a missing one counts as not mobile rather than raising.
+    user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
+    return {'mobile': 'android' in user_agent or 'iphone' in user_agent}
