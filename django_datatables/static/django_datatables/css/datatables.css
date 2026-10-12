@@ -214,9 +214,17 @@
 }
 
 /* With the panel no longer clipping, a filter value with nowhere to wrap (an email address, a long reference)
-   would run out of it over the grid. Let it break anywhere instead. */
+   would run out of it over the grid. Hold each check and its label to the width they have, and break a word
+   only when it cannot fit. Not overflow-wrap: anywhere, which lets a label shrink to a single character
+   wherever space is short -- the selection filter's Selected / Not selected beside its button went one
+   letter to a line. */
+.side-filter .form-check,
 .side-filter .form-check-label {
-    overflow-wrap: anywhere;
+    max-width: 100%;
+}
+
+.side-filter .form-check-label {
+    overflow-wrap: break-word;
 }
 
 .collapsed-bar {
