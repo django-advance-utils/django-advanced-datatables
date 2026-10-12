@@ -8,12 +8,13 @@ except PackageNotFoundError:
     version = 'local'
 
 
+# Every asset is served from this package's static files; no class sets cdn_path, so html_include never
+# points at a CDN, even when called with cdn=True.
+
+
 class DataTables(SourceBase):
-    cdn_path = 'cdn.datatables.net/v/dt/dt-1.10.18/b-1.5.6/b-html5-1.5.6/rg-1.1.0/rr-1.2.4/'
     filename = 'datatables.min'
     static_path = 'django_datatables/datatables/'
-    cdn_js_path = ''
-    cdn_css_path = ''
 
 
 class FilteredDataTables(SourceBase):
@@ -24,15 +25,15 @@ class FilteredDataTables(SourceBase):
 
 
 class Moment(SourceBase):
-    cdn_path = 'cdnjs.cloudflare.com/ajax/libs/moment.js/2.8.4/'
+    # moment.js 2.8.4
+    static_path = 'django_datatables/moment/'
     js_filename = 'moment.min.js'
-    cdn_js_path = ''
 
 
 class MomentDatatable(SourceBase):
-    cdn_path = 'cdn.datatables.net/plug-ins/1.10.16/sorting/'
+    # DataTables sorting plug-in datetime-moment.js (as served at cdn.datatables.net/plug-ins/1.10.16/)
+    static_path = 'django_datatables/datatables-plugins/'
     js_filename = 'datetime-moment.js'
-    cdn_js_path = ''
 
 
 class JSpreadsheet(SourceBase):
