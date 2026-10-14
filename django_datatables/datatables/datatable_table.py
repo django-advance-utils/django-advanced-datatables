@@ -137,7 +137,7 @@ class DatatableTable:
         """
         return getattr(self.model, self.query_manager)
 
-    def default_order_by(self, grouped=False):
+    def default_order_by(self, query=None):
         """The model's own ``Meta.ordering``, for a table that has not asked for a sort.
 
         ``get_query`` used to end in ``.order_by(*self.order_by)`` unconditionally. With no sort
@@ -151,17 +151,41 @@ class DatatableTable:
         Returns ``[]`` -- today's behaviour, untouched -- wherever restoring the ordering could
         change the results rather than merely arrange them:
 
-        * ``grouped``: a ``values()`` + ``annotate()`` query, from ``initial_values`` or a column's
-          ``annotations_value``. Django puts the ordering fields into the ``GROUP BY`` there, which
-          silently regroups the rows and moves the numbers.
+        * ``query`` groups by something coarser than a row. On a ``values()`` + ``annotate()``
+          aggregate Django folds the ordering fields into the ``GROUP BY``, and where the grouping
+          is coarser than one row per record that regroups the rows and moves the numbers.
           ``server_side_filters.ServerSideFilter.get_facets`` leans on the same rule in the other
           direction, clearing the ordering to keep it out of its facet counts.
-        * ``distinct``: the database requires the ordering to agree with the distinct fields.
+          This is read off the built query rather than from ``initial_values`` and
+          ``annotations_value``, because grouping can also arrive through ``base_queryset()``,
+          which is a public hook and may hand back an aggregate queryset of its own.
+          Grouping that still carries the model's primary key is one row per record, so ordering
+          cannot split it and the fallback stands -- which is the ordinary case of a table with an
+          aggregate column.
+        * ``distinct``, where the database requires the ordering to agree with the distinct fields.
         * a table with no model behind it, which has no ordering to inherit.
         """
-        if grouped or self.distinct is not None or self.model is None:
+        if self.distinct is not None or self.model is None:
+            return []
+        if query is not None and self.groups_coarser_than_a_row(query):
             return []
         return list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
+
+    def groups_coarser_than_a_row(self, query):
+        """Does ``query`` group several records into one row?
+
+        ``False`` for an ungrouped query, and for one grouped by a key that carries the model's
+        primary key -- there the grouping is one row per record, so adding an ordering field to the
+        ``GROUP BY`` cannot split anything.
+        """
+        group_by = getattr(getattr(query, 'query', None), 'group_by', None)
+        if not group_by:
+            return False
+        if group_by is True:
+            # "group by whatever is selected", which we cannot inspect here. Assume the worst.
+            return True
+        pk = self.model._meta.pk
+        return not any(getattr(expression, 'target', None) is pk for expression in group_by)
 
     def get_query(self, **_kwargs):
         annotations = {}
@@ -183,11 +207,12 @@ class DatatableTable:
                      else query.filter(**self.initial_filter))
         if annotations_value:
             query = query.annotate(**annotations_value).values(*[f for f in annotations_value])
-        # A table that set no sort falls back to the model's ordering rather than losing it;
-        # see default_order_by for the cases that have to stay unordered.
-        order_by = self.order_by or self.default_order_by(
-            grouped=bool(self.initial_values or annotations_value))
-        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields()).order_by(*order_by)
+        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields())
+        # A table that set no sort falls back to the model's ordering rather than losing it.
+        # Decided on the built query, so grouping reaches this however it arrived; see
+        # default_order_by for the cases that have to stay unordered. order_by() is still
+        # called when that comes back empty, which is what cleared the ordering before.
+        query = query.order_by(*(self.order_by or self.default_order_by(query)))
         if isinstance(self.filter, models.Q):
             query = query.filter(self.filter)
         else:

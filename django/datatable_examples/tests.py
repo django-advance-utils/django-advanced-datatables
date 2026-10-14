@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from ajax_helpers.mixins import AjaxHelpers
 from django.contrib.auth.models import AnonymousUser
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.db.models.functions import Upper
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
@@ -1333,6 +1333,24 @@ class TestMergedColumns(TestCase):
         self.assertEqual(SelectColumn(column_name='sel', title='', model=Person).title, '')
 
 
+class TestManyToManyThroughModelPath(TestCase):
+    """A ManyToManyColumn reached through a relation ('company__reverse_tag' on a Person table) takes
+    the relation as its model_path, and must key its rows on the related object's pk."""
+
+    def setUp(self):
+        make_data()
+        self.table = DatatableTable('people', model=Person)
+        self.table.add_columns('id', 'first_name', 'company__reverse_tag')
+
+    def test_field_prefixed_once(self):
+        self.assertEqual(self.table.columns[2].field, 'company__pk')
+
+    def test_rows_show_the_related_objects_tags(self):
+        rows = self.table.get_table_array(RequestFactory().get('/'), self.table.get_query())
+        tags = {row[1]: sorted(Tags.objects.get(pk=pk).tag for pk in row[2]) for row in rows}
+        self.assertEqual(tags, {'Alice': ['Blue', 'Red'], 'Bob': ['Blue', 'Red'], 'Carol': ['Red'], 'Dave': []})
+
+
 class TestModelOrderingFallback(TestCase):
     """A table that asks for no sort inherits the model's ``Meta.ordering`` instead of losing it.
 
@@ -1392,7 +1410,7 @@ class TestModelOrderingFallback(TestCase):
         self.assertEqual(len(ordered_rows), len(rows))
         self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
         self.assertNotIn('ORDER BY', sql)
-        self.assertEqual(table.default_order_by(grouped=True), [])
+        self.assertTrue(table.groups_coarser_than_a_row(table.get_query()))
 
     def test_distinct_stays_unordered(self):
         # The database requires the ordering to agree with the distinct fields, so a fallback
@@ -1403,6 +1421,37 @@ class TestModelOrderingFallback(TestCase):
         with mock.patch.object(Person._meta, 'ordering', ['-surname']):
             self.assertEqual(table.default_order_by(), [])
             self.assertEqual(list(self._ordering(table)), [])
+
+    def test_grouping_from_base_queryset_is_caught_too(self):
+        """``base_queryset`` is a public hook and may hand back an aggregate queryset of its own.
+
+        Nothing on the table says so -- ``initial_values`` and the columns are innocent -- so the
+        grouping has to be read off the built query, or the fallback would fold ``Meta.ordering``
+        into somebody else's ``GROUP BY`` and split the rows.
+        """
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+
+        class GroupedBaseTable(DatatableTable):
+            def base_queryset(self):
+                return Company.objects.values('name').annotate(people=Count('person__id'))
+
+        table = GroupedBaseTable('companies', model=Company)
+        table.add_columns('name')
+        self.assertFalse(table.initial_values)
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            self.assertEqual(table.default_order_by(table.get_query()), [])
+            self.assertEqual(list(self._ordering(table)), [])
+            self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
+
+    def test_grouping_that_still_carries_the_pk_keeps_the_fallback(self):
+        # An aggregate column groups by the model's pk, which is one row per record: ordering
+        # cannot split it, so the table keeps its ordering.
+        table = DatatableTable('companies', model=Company)
+        table.add_columns('name', 'people')
+        with mock.patch.object(Company._meta, 'ordering', ['name']):
+            self.assertFalse(table.groups_coarser_than_a_row(table.get_query()))
+            self.assertEqual(list(self._ordering(table)), ['name'])
 
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])

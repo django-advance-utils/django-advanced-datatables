@@ -91,7 +91,9 @@ class ManyToManyColumn(DatatableColumn):
         self.options['render'] = [{'var': '%1%', 'html': html, 'function': 'ReplaceLookup'}]
         self.setup_kwargs(kwargs)
         if len(fields) > 2:
-            self.field = '__'.join(fields[:-2]) + '__pk'
+            # fields came from self.field, which already carries model_path, so set _field directly:
+            # going through the setter would prefix model_path a second time.
+            self._field = '__'.join(fields[:-2]) + '__pk'
         else:
             self.field = data_dict_key
 
