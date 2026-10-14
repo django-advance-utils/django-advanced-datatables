@@ -5,7 +5,9 @@ from inspect import isclass
 from typing import TypeVar, Dict
 
 from ajax_helpers.utils import random_string
+from django.core.exceptions import FieldDoesNotExist
 from django.db import models
+from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpResponse, JsonResponse
 from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
@@ -167,16 +169,25 @@ class DatatableTable:
         """
         if self.distinct is not None or self.model is None:
             return []
+        ordering = list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
+        if not ordering:
+            return []
+        if not all(self.ordering_term_is_single_valued(term) for term in ordering):
+            # A term that walks a reverse FK or a m2m multiplies a record's rows -- on a grouped
+            # query it splits the aggregate (one row per related record, each counting its own
+            # share), and even ungrouped it repeats the record once per related row. Today's
+            # tables show neither, so the ordering is not worth that.
+            return []
         if query is not None and self.groups_coarser_than_a_row(query):
             return []
-        return list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
+        return ordering
 
     def groups_coarser_than_a_row(self, query):
         """Does ``query`` group several records into one row?
 
         ``False`` for an ungrouped query, and for one grouped by a key that carries the model's
-        primary key -- there the grouping is one row per record, so adding an ordering field to the
-        ``GROUP BY`` cannot split anything.
+        primary key -- there the grouping is one row per record, so adding a single-valued
+        ordering field to the ``GROUP BY`` cannot split anything.
         """
         group_by = getattr(getattr(query, 'query', None), 'group_by', None)
         if not group_by:
@@ -186,6 +197,34 @@ class DatatableTable:
             return True
         pk = self.model._meta.pk
         return not any(getattr(expression, 'target', None) is pk for expression in group_by)
+
+    def ordering_term_is_single_valued(self, term):
+        """Can ``term`` be ordered on without multiplying a record's rows?
+
+        True for a plain field on the model, and for one reached through forward relations only --
+        those are many-to-one, so a record still joins to a single row. False for anything that
+        walks a reverse foreign key or a many-to-many, for ``'?'``, and for an expression rather
+        than a field path, which cannot be inspected here and is assumed to be the worst case.
+        """
+        if not isinstance(term, str):
+            return False
+        term = term.lstrip('-+')
+        if not term or term == '?':
+            return False
+        model = self.model
+        for part in term.split(LOOKUP_SEP):
+            if model is None:
+                return False
+            if part == 'pk':
+                return True
+            try:
+                field = model._meta.get_field(part)
+            except (FieldDoesNotExist, AttributeError):
+                return False
+            if field.many_to_many or field.one_to_many:
+                return False
+            model = field.related_model if field.is_relation else None
+        return True
 
     def get_query(self, **_kwargs):
         annotations = {}

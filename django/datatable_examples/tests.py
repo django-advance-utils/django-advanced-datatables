@@ -1453,5 +1453,37 @@ class TestModelOrderingFallback(TestCase):
             self.assertFalse(table.groups_coarser_than_a_row(table.get_query()))
             self.assertEqual(list(self._ordering(table)), ['name'])
 
+    def test_ordering_through_a_multi_valued_relation_is_refused(self):
+        """A term that walks a reverse FK or m2m multiplies a record's rows.
+
+        On an aggregate it is worse than untidy: the parent splits into one row per related
+        record and the aggregate is recomputed over each share, so the numbers come out wrong.
+        A company with three people and a Count column is one row of 3, not three rows of 1.
+        """
+        table = DatatableTable('companies', model=Company)
+        table.add_columns('name', 'people')
+        acme = Company.objects.get(name='Acme')
+        expected = [{'name': 'Acme', 'people': Person.objects.filter(company=acme).count()}]
+
+        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']):
+            self.assertFalse(table.ordering_term_is_single_valued('person__first_name'))
+            self.assertEqual(table.default_order_by(table.get_query()), [])
+            self.assertEqual([r for r in table.get_query() if r['name'] == 'Acme'], expected)
+
+    def test_ordering_through_a_forward_relation_is_allowed(self):
+        # A forward FK is many-to-one, so the record still joins to a single row.
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        self.assertTrue(table.ordering_term_is_single_valued('company__name'))
+        with mock.patch.object(Person._meta, 'ordering', ['company__name']):
+            self.assertEqual(list(self._ordering(table)), ['company__name'])
+
+    def test_what_counts_as_a_single_valued_ordering_term(self):
+        table = DatatableTable('people', model=Person)
+        for term in ('first_name', '-first_name', 'pk', 'company__name', '-company__name'):
+            self.assertTrue(table.ordering_term_is_single_valued(term), term)
+        for term in ('?', '', 'no_such_field', 'company__person__first_name', Upper('first_name')):
+            self.assertFalse(table.ordering_term_is_single_valued(term), term)
+
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])
