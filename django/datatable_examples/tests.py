@@ -1485,5 +1485,53 @@ class TestModelOrderingFallback(TestCase):
         for term in ('?', '', 'no_such_field', 'company__person__first_name', Upper('first_name')):
             self.assertFalse(table.ordering_term_is_single_valued(term), term)
 
+    def test_grouping_introduced_by_extra_filters_is_caught(self):
+        """``extra_filters`` runs after the query is built, so the fallback is applied after it.
+
+        Decided any earlier and the guard would be looking at a query shape the hook then
+        replaces, and the ordering would land in a ``GROUP BY`` nobody checked.
+        """
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+
+        class ExtraFilterTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.values('name').annotate(people=Count('person__id'))
+
+        table = ExtraFilterTable('companies', model=Company)
+        table.add_columns('name')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            rows = list(table.get_query())
+            self.assertEqual(list(table.get_query().query.order_by), [])
+            self.assertEqual([r['name'] for r in rows].count('Duplicate'), 1)
+
+    def test_grouping_introduced_by_view_filter_is_caught(self):
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+
+        class ViewFilterTable(DatatableTable):
+            @staticmethod
+            def view_filter(query, table):
+                return query.values('name').annotate(people=Count('person__id'))
+
+        table = ViewFilterTable('companies', model=Company)
+        table.add_columns('name')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            rows = list(table.get_query())
+            self.assertEqual(list(table.get_query().query.order_by), [])
+            self.assertEqual([r['name'] for r in rows].count('Duplicate'), 1)
+
+    def test_a_table_that_limits_its_rows_is_still_ordered(self):
+        """``max_records`` slices, and Django will not reorder a sliced queryset, so the fallback
+        goes on before the slice -- taking the first N off an unordered query is an arbitrary
+        set, which is the whole complaint."""
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        table.max_records = 2
+        with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
+            # max_records over-fetches by one, so three rows off the top of the ordering.
+            self.assertEqual([r['first_name'] for r in table.get_query()], ['Dave', 'Carol', 'Bob'])
+
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])

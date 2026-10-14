@@ -226,6 +226,20 @@ class DatatableTable:
             model = field.related_model if field.is_relation else None
         return True
 
+    def apply_default_ordering(self, query):
+        """Put the model's own ordering on ``query`` when the table asked for no sort.
+
+        Called once the query is otherwise finished, so that grouping introduced anywhere --
+        ``initial_values``, a column's ``annotations_value``, ``base_queryset`` or either of the
+        ``extra_filters`` / ``view_filter`` hooks -- is in front of ``default_order_by``'s guard
+        rather than behind it. Returns ``query`` untouched when the table set its own sort, or
+        when the fallback is one of the cases that has to stay unordered.
+        """
+        if self.order_by:
+            return query
+        order_by = self.default_order_by(query)
+        return query.order_by(*order_by) if order_by else query
+
     def get_query(self, **_kwargs):
         annotations = {}
         annotations_value = {}
@@ -246,12 +260,12 @@ class DatatableTable:
                      else query.filter(**self.initial_filter))
         if annotations_value:
             query = query.annotate(**annotations_value).values(*[f for f in annotations_value])
-        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields())
-        # A table that set no sort falls back to the model's ordering rather than losing it.
-        # Decided on the built query, so grouping reaches this however it arrived; see
-        # default_order_by for the cases that have to stay unordered. order_by() is still
-        # called when that comes back empty, which is what cleared the ordering before.
-        query = query.order_by(*(self.order_by or self.default_order_by(query)))
+        # order_by() is called here whether or not there is a sort, because clearing the
+        # ordering is what the table did before and the grouped paths still rely on it. The
+        # fallback to the model's ordering is applied further down instead, once the query is
+        # finished -- see apply_default_ordering.
+        query = query.annotate(**annotations).exclude(**self.exclude).values(
+            *self.fields()).order_by(*self.order_by)
         if isinstance(self.filter, models.Q):
             query = query.filter(self.filter)
         else:
@@ -259,9 +273,16 @@ class DatatableTable:
         if self.distinct is not None:
             query = query.distinct(*self.distinct)
         if self.max_records:
+            # Ordering has to go on before the slice: Django will not reorder a sliced queryset.
+            # So a table that limits its rows decides without seeing the two hooks below -- better
+            # than taking its rows off an unordered query, which is an arbitrary set.
+            query = self.apply_default_ordering(query)
             query = query[:self.max_records + 1]
         query = self.extra_filters(query=query)
         query = self.view_filter(query, self)
+        if not self.max_records:
+            # Last, so that grouping introduced by either hook is in front of the guard.
+            query = self.apply_default_ordering(query)
         if aggregations:
             aggregations_data = {}
             for column_name, column_config in aggregations.items():
