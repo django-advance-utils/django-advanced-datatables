@@ -137,6 +137,32 @@ class DatatableTable:
         """
         return getattr(self.model, self.query_manager)
 
+    def default_order_by(self, grouped=False):
+        """The model's own ``Meta.ordering``, for a table that has not asked for a sort.
+
+        ``get_query`` used to end in ``.order_by(*self.order_by)`` unconditionally. With no sort
+        configured that is ``.order_by()`` with no arguments, which in Django does not mean "no
+        preference" -- it throws ordering away, ``Meta.ordering`` included. The table was then a
+        paged view over an unordered query, so which rows landed on which page was whatever the
+        database happened to scan first, and it moved as rows were written: a page could show a
+        row twice, or miss one. A model that states how it wants to be ordered now keeps that
+        ordering unless the table asks for another.
+
+        Returns ``[]`` -- today's behaviour, untouched -- wherever restoring the ordering could
+        change the results rather than merely arrange them:
+
+        * ``grouped``: a ``values()`` + ``annotate()`` query, from ``initial_values`` or a column's
+          ``annotations_value``. Django puts the ordering fields into the ``GROUP BY`` there, which
+          silently regroups the rows and moves the numbers.
+          ``server_side_filters.ServerSideFilter.get_facets`` leans on the same rule in the other
+          direction, clearing the ordering to keep it out of its facet counts.
+        * ``distinct``: the database requires the ordering to agree with the distinct fields.
+        * a table with no model behind it, which has no ordering to inherit.
+        """
+        if grouped or self.distinct is not None or self.model is None:
+            return []
+        return list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
+
     def get_query(self, **_kwargs):
         annotations = {}
         annotations_value = {}
@@ -157,7 +183,11 @@ class DatatableTable:
                      else query.filter(**self.initial_filter))
         if annotations_value:
             query = query.annotate(**annotations_value).values(*[f for f in annotations_value])
-        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields()).order_by(*self.order_by)
+        # A table that set no sort falls back to the model's ordering rather than losing it;
+        # see default_order_by for the cases that have to stay unordered.
+        order_by = self.order_by or self.default_order_by(
+            grouped=bool(self.initial_values or annotations_value))
+        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields()).order_by(*order_by)
         if isinstance(self.filter, models.Q):
             query = query.filter(self.filter)
         else:

@@ -1,4 +1,5 @@
 import base64
+from unittest import mock
 import datetime
 import inspect
 import json
@@ -1330,3 +1331,78 @@ class TestMergedColumns(TestCase):
     def test_select_column_title_overridable(self):
         self.assertIn('Select all', SelectColumn(column_name='sel', model=Person).title)
         self.assertEqual(SelectColumn(column_name='sel', title='', model=Person).title, '')
+
+
+class TestModelOrderingFallback(TestCase):
+    """A table that asks for no sort inherits the model's ``Meta.ordering`` instead of losing it.
+
+    ``get_query`` used to finish with ``.order_by(*self.order_by)``. With no sort configured that
+    is ``.order_by()`` with no arguments, which in Django clears ordering outright rather than
+    meaning "no preference", so every such table was a paged view over an unordered query.
+    """
+
+    def setUp(self):
+        make_data()
+
+    @staticmethod
+    def _ordering(table):
+        return table.get_query().query.order_by
+
+    def test_model_ordering_is_used_when_the_table_sets_no_sort(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
+            self.assertEqual(list(self._ordering(table)), ['-first_name'])
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Dave', 'Carol', 'Bob', 'Alice'])
+
+    def test_a_sort_the_table_set_itself_still_wins(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        table.order_by = ['first_name']
+        with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Alice', 'Bob', 'Carol', 'Dave'])
+
+    def test_a_model_with_no_ordering_of_its_own_is_unchanged(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        self.assertFalse(Person._meta.ordering)
+        self.assertEqual(list(self._ordering(table)), [])
+
+    def test_a_grouping_query_stays_unordered_so_its_group_by_cannot_move(self):
+        """The guard that matters: on a ``values()`` + ``annotate()`` aggregate Django folds the
+        ordering fields into the ``GROUP BY``, which regroups the rows and moves the numbers.
+
+        Two companies share a name and differ in ``order``. Grouped by name they are one row; were
+        the model's ``['order']`` ordering applied here, ``order`` would join the ``GROUP BY`` and
+        split them into two.
+        """
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+        table = DatatableTable('companies', model=Company)
+        table.add_columns('name', 'people')
+        table.initial_values = ['name']
+
+        rows = {r['name']: r for r in table.get_query()}
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            ordered_rows = {r['name']: r for r in table.get_query()}
+            sql = str(table.get_query().query)
+
+        self.assertEqual(len(ordered_rows), len(rows))
+        self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
+        self.assertNotIn('ORDER BY', sql)
+        self.assertEqual(table.default_order_by(grouped=True), [])
+
+    def test_distinct_stays_unordered(self):
+        # The database requires the ordering to agree with the distinct fields, so a fallback
+        # ordering cannot be bolted on here.
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        table.distinct = ['first_name']
+        with mock.patch.object(Person._meta, 'ordering', ['-surname']):
+            self.assertEqual(table.default_order_by(), [])
+            self.assertEqual(list(self._ordering(table)), [])
+
+    def test_a_table_with_no_model_has_nothing_to_inherit(self):
+        self.assertEqual(DatatableTable('no_model').default_order_by(), [])
