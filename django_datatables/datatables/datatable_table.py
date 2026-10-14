@@ -164,10 +164,17 @@ class DatatableTable:
           Grouping that still carries the model's primary key is one row per record, so ordering
           cannot split it and the fallback stands -- which is the ordinary case of a table with an
           aggregate column.
-        * ``distinct``, where the database requires the ordering to agree with the distinct fields.
+        * ``distinct``, set on the table or reached through a hook, where the database requires
+          the ordering to agree with the distinct fields.
         * a table with no model behind it, which has no ordering to inherit.
         """
         if self.distinct is not None or self.model is None:
+            return []
+        built = getattr(query, 'query', None)
+        if built is not None and (built.distinct or built.distinct_fields):
+            # Distinctness can also arrive through base_queryset or either hook. Ordering on a
+            # column outside a DISTINCT select either drags it into the select -- bringing the
+            # duplicates the table was removing back -- or, with DISTINCT ON, is rejected outright.
             return []
         ordering = list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
         if not ordering:
@@ -232,10 +239,15 @@ class DatatableTable:
         Called once the query is otherwise finished, so that grouping introduced anywhere --
         ``initial_values``, a column's ``annotations_value``, ``base_queryset`` or either of the
         ``extra_filters`` / ``view_filter`` hooks -- is in front of ``default_order_by``'s guard
-        rather than behind it. Returns ``query`` untouched when the table set its own sort, or
-        when the fallback is one of the cases that has to stay unordered.
+        rather than behind it. Returns ``query`` untouched when the table set its own sort, when
+        a hook ordered the query itself, or when the fallback is one of the cases that has to
+        stay unordered.
         """
         if self.order_by:
+            return query
+        if getattr(getattr(query, 'query', None), 'order_by', ()):
+            # A hook ordered the query itself. That is a deliberate choice about this table and
+            # outranks a fallback taken from the model.
             return query
         order_by = self.default_order_by(query)
         return query.order_by(*order_by) if order_by else query
@@ -273,15 +285,19 @@ class DatatableTable:
         if self.distinct is not None:
             query = query.distinct(*self.distinct)
         if self.max_records:
-            # Ordering has to go on before the slice: Django will not reorder a sliced queryset.
-            # So a table that limits its rows decides without seeing the two hooks below -- better
-            # than taking its rows off an unordered query, which is an arbitrary set.
-            query = self.apply_default_ordering(query)
             query = query[:self.max_records + 1]
         query = self.extra_filters(query=query)
         query = self.view_filter(query, self)
         if not self.max_records:
             # Last, so that grouping introduced by either hook is in front of the guard.
+            #
+            # A capped table is left alone: the slice above is taken before the hooks run, and
+            # Django will not reorder a sliced queryset, so there is no point after the hooks at
+            # which the fallback could be applied and checked. Deciding before the slice instead
+            # would mean deciding without seeing what the hooks do to the query, which is how a
+            # fallback ordering could end up inside a hook's GROUP BY. Such a table keeps the
+            # behaviour it has always had. Ordering it properly needs the slice to move after the
+            # hooks, which changes what they are handed and is not this change to make.
             query = self.apply_default_ordering(query)
         if aggregations:
             aggregations_data = {}

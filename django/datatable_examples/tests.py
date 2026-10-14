@@ -1522,16 +1522,64 @@ class TestModelOrderingFallback(TestCase):
             self.assertEqual(list(table.get_query().query.order_by), [])
             self.assertEqual([r['name'] for r in rows].count('Duplicate'), 1)
 
-    def test_a_table_that_limits_its_rows_is_still_ordered(self):
-        """``max_records`` slices, and Django will not reorder a sliced queryset, so the fallback
-        goes on before the slice -- taking the first N off an unordered query is an arbitrary
-        set, which is the whole complaint."""
+    def test_a_table_that_limits_its_rows_keeps_todays_behaviour(self):
+        """A capped table is left unordered, which is what it has always been.
+
+        The slice is taken before the hooks run and Django will not reorder a sliced queryset, so
+        there is no point after the hooks at which the fallback could be applied and checked.
+        Applying it before the slice instead would be deciding blind -- a hook can regroup the
+        query afterwards, and the ordering would land in a ``GROUP BY`` nothing had looked at.
+        """
         table = DatatableTable('people', model=Person)
         table.add_columns('id', 'first_name')
         table.max_records = 2
         with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
-            # max_records over-fetches by one, so three rows off the top of the ordering.
-            self.assertEqual([r['first_name'] for r in table.get_query()], ['Dave', 'Carol', 'Bob'])
+            self.assertEqual(list(table.get_query().query.order_by), [])
+
+    def test_a_capped_table_cannot_have_a_hook_group_under_an_ordering(self):
+        # The hazard the test above buys off: with the fallback applied before the slice, this
+        # ['order'] ordering would enter the hook's GROUP BY and split the two 'Duplicate' rows.
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+
+        class CappedExtraFilterTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.values('name').annotate(people=Count('person__id'))
+
+        table = CappedExtraFilterTable('companies', model=Company)
+        table.add_columns('name')
+        table.max_records = 10
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
+
+    def test_distinct_reached_through_a_hook_is_caught(self):
+        """``self.distinct`` is not the only way a query becomes distinct."""
+        class DistinctHookTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.values('first_name').distinct()
+
+        table = DistinctHookTable('people', model=Person)
+        table.add_columns('first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['surname']):
+            self.assertEqual(table.default_order_by(table.get_query()), [])
+            self.assertEqual(list(table.get_query().query.order_by), [])
+
+    def test_ordering_a_hook_set_itself_is_not_overwritten(self):
+        """A hook that orders the query has made a decision about this table; the fallback is a
+        default and must not sit on top of it."""
+        class OrderingHookTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.order_by('-first_name')
+
+        table = OrderingHookTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            self.assertEqual(list(table.get_query().query.order_by), ['-first_name'])
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Dave', 'Carol', 'Bob', 'Alice'])
 
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])
