@@ -1330,3 +1330,21 @@ class TestMergedColumns(TestCase):
     def test_select_column_title_overridable(self):
         self.assertIn('Select all', SelectColumn(column_name='sel', model=Person).title)
         self.assertEqual(SelectColumn(column_name='sel', title='', model=Person).title, '')
+
+
+class TestManyToManyThroughModelPath(TestCase):
+    """A ManyToManyColumn reached through a relation ('company__reverse_tag' on a Person table) takes
+    the relation as its model_path, and must key its rows on the related object's pk."""
+
+    def setUp(self):
+        make_data()
+        self.table = DatatableTable('people', model=Person)
+        self.table.add_columns('id', 'first_name', 'company__reverse_tag')
+
+    def test_field_prefixed_once(self):
+        self.assertEqual(self.table.columns[2].field, 'company__pk')
+
+    def test_rows_show_the_related_objects_tags(self):
+        rows = self.table.get_table_array(RequestFactory().get('/'), self.table.get_query())
+        tags = {row[1]: sorted(Tags.objects.get(pk=pk).tag for pk in row[2]) for row in rows}
+        self.assertEqual(tags, {'Alice': ['Blue', 'Red'], 'Bob': ['Blue', 'Red'], 'Carol': ['Red'], 'Dave': []})
