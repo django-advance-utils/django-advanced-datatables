@@ -166,11 +166,12 @@ class DatatableTable:
         * ``distinct``, set on the table or already on the query, where the database requires the
           ordering to agree with the distinct fields -- and where an extra ordering column joins
           the DISTINCT selection and stops rows being folded together at all.
-        * an ordering name the query has annotated. Django resolves a name against the query's
-          annotations before the model's fields, so the name may no longer mean the column it was
-          written for. Django refuses an annotation that collides with a model field on an
-          ordinary queryset, but allows it after ``values()``, where collisions are judged against
-          the selected names instead -- so a ``base_queryset`` can shadow a field this way.
+        * an ordering name the query has redefined, as an annotation or an ``extra(select=...)``
+          alias. Django resolves both before the model's own fields, so the name may no longer
+          mean the column it was written for. An annotation colliding with a model field is
+          refused on an ordinary queryset but allowed after ``values()``, where collisions are
+          judged against the selected names; an ``extra`` alias stays in ``query.extra`` even when
+          ``values()`` masks the selection. Either way a ``base_queryset`` can shadow a field.
 
         A combined query deliberately has no guard, because it cannot reach this point:
         ``get_query`` annotates before this runs, and Django refuses ``annotate()`` after
@@ -190,8 +191,9 @@ class DatatableTable:
             return []
         if grouped or self.query_groups_rows(built):
             return []
-        annotations = getattr(built, 'annotations', None) or {}
-        if any(term.lstrip('-+') in annotations for term in ordering if isinstance(term, str)):
+        redefined = set(getattr(built, 'annotations', None) or ())
+        redefined |= set(getattr(built, 'extra', None) or ())
+        if any(term.lstrip('-+') in redefined for term in ordering if isinstance(term, str)):
             return []
         if not all(self.ordering_term_is_a_local_column(term) for term in ordering):
             return []

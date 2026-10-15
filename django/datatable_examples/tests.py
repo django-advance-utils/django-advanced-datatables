@@ -1536,6 +1536,30 @@ class TestModelOrderingFallback(TestCase):
             self.assertEqual([r for r in built if r['id'] == acme.pk],
                              [{'id': acme.pk, 'people': Person.objects.filter(company=acme).count()}])
 
+    def test_an_ordering_name_an_extra_select_has_taken_is_refused(self):
+        """``extra(select=...)`` puts a name in ``query.extra``, not ``query.annotations``.
+
+        Django resolves it before the model's own fields just the same, and ``values()`` masking
+        the selection does not remove the alias. Ordering on the shadowed name then uses the
+        person's column instead of the company's, adding it to the ``GROUP BY`` and splitting the
+        people count.
+        """
+        class ExtraSelectBase(DatatableTable):
+            def base_queryset(self):
+                return Company.objects.extra(
+                    select={'order': 'datatable_examples_person.first_name'})
+
+        table = ExtraSelectBase('companies', model=Company)
+        table.add_columns('id', 'people')
+        acme = Company.objects.get(name='Acme')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            built = table.get_query()
+            self.assertIn('order', built.query.extra)
+            self.assertNotIn('order', built.query.annotations)
+            self.assertEqual(table.default_order_by(built), [])
+            self.assertEqual([r for r in built if r['id'] == acme.pk],
+                             [{'id': acme.pk, 'people': Person.objects.filter(company=acme).count()}])
+
     # ---- what counts as an orderable term ------------------------------------------
 
     def test_an_ordering_through_a_relation_is_not_inherited(self):
