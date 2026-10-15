@@ -164,14 +164,19 @@ class DatatableTable:
           explicit sort is a choice made about one grid and this is not.
           ``server_side_filters.ServerSideFilter.get_facets`` leans on the same rule in the other
           direction, clearing the ordering to keep it out of its facet counts.
-        * ``distinct``, where the database requires the ordering to agree with the distinct fields.
+        * ``distinct``, set on the table or already on the query, where the database requires the
+          ordering to agree with the distinct fields -- and where an extra ordering column joins
+          the DISTINCT selection and stops rows being folded together at all.
+        * an ordering name the query has annotated. Django resolves a name against the query's
+          annotations before the model's fields, so the name may no longer mean the column it was
+          written for. Django refuses an annotation that collides with a model field on an
+          ordinary queryset, but allows it after ``values()``, where collisions are judged against
+          the selected names instead -- so a ``base_queryset`` can shadow a field this way.
 
-        Two things deliberately have no guard, because neither can reach this point. A combined
-        query cannot: ``get_query`` annotates before this runs, and Django refuses
-        ``annotate()`` after ``union()``. Nor can an annotation shadowing one of the ordering
-        names: Django rejects an annotation that collides with a model field, and ``Meta.ordering``
-        names model fields. Both are only reachable after the hooks, which is where an explicit
-        ``order_by`` would meet them too.
+        A combined query deliberately has no guard, because it cannot reach this point:
+        ``get_query`` annotates before this runs, and Django refuses ``annotate()`` after
+        ``union()``. It is only reachable after the hooks, which is where an explicit ``order_by``
+        would meet it too.
         * an ordering term that is not single-valued; see ``ordering_term_is_single_valued``.
         * a table with no model behind it, which has no ordering to inherit.
         """
@@ -180,7 +185,13 @@ class DatatableTable:
         ordering = list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
         if not ordering:
             return []
-        if grouped or self.query_groups_rows(getattr(query, 'query', None)):
+        built = getattr(query, 'query', None)
+        if getattr(built, 'distinct', False) or getattr(built, 'distinct_fields', ()):
+            return []
+        if grouped or self.query_groups_rows(built):
+            return []
+        annotations = getattr(built, 'annotations', None) or {}
+        if any(term.lstrip('-+') in annotations for term in ordering if isinstance(term, str)):
             return []
         if not all(self.ordering_term_is_single_valued(term) for term in ordering):
             return []
@@ -223,7 +234,9 @@ class DatatableTable:
         checked in turn, with ``seen`` carrying the path taken so two models ordering through each
         other stop rather than loop. The raw column spellings do not expand: ``company__pk``, and
         ``company_id``, which ``get_field`` answers with the foreign key rather than raising, so
-        the term has to be compared with the field's ``attname``.
+        the term has to be compared with the field's ``attname`` -- and only at the end of the
+        path, since Django lets an attname be traversed as well, and
+        ``company_id__person__first_name`` means what ``company__person__first_name`` means.
         """
         if not isinstance(term, str):
             return False
@@ -233,7 +246,8 @@ class DatatableTable:
         model = model if model is not None else self.model
         seen = seen if seen is not None else frozenset()
         field = None
-        for part in term.split(LOOKUP_SEP):
+        parts = term.split(LOOKUP_SEP)
+        for index, part in enumerate(parts):
             if model is None:
                 return False
             if part == 'pk':
@@ -244,7 +258,11 @@ class DatatableTable:
                 return False
             if field.many_to_many or field.one_to_many:
                 return False
-            if field.is_relation and part == getattr(field, 'attname', None) != field.name:
+            if (index == len(parts) - 1 and field.is_relation
+                    and part == getattr(field, 'attname', None) != field.name):
+                # Ends on the foreign key's own column ('company_id'): a plain value, which Django
+                # does not expand through the related model. Only true at the end of the path --
+                # 'company_id__person__first_name' is a traversal and resolves like 'company__...'.
                 return True
             model = field.related_model if field.is_relation else None
         if field is None or not field.is_relation:

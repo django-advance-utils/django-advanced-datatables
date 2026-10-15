@@ -1492,6 +1492,50 @@ class TestModelOrderingFallback(TestCase):
             self.assertEqual(table.default_order_by(), [])
             self.assertEqual(self._ordering(table), [])
 
+    def test_distinct_on_the_base_queryset_is_caught(self):
+        """``self.distinct`` is not the only way a query becomes distinct.
+
+        An extra ordering column joins the DISTINCT selection, so rows the table was folding
+        together stop being folded: two companies sharing a name and differing in ``order`` come
+        back as two rows instead of one.
+        """
+        class DistinctBase(DatatableTable):
+            def base_queryset(self):
+                return Company.objects.distinct()
+
+        Company.objects.create(name='Twin', order=1)
+        Company.objects.create(name='Twin', order=2)
+        table = DistinctBase('companies', model=Company)
+        table.add_columns('name')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            built = table.get_query()
+            self.assertTrue(built.query.distinct)
+            self.assertEqual(table.default_order_by(built), [])
+            self.assertEqual(self._ordering(table), [])
+
+    def test_an_ordering_name_the_query_has_annotated_is_refused(self):
+        """Django resolves an ordering name against the query's annotations before model fields.
+
+        It refuses an annotation that collides with a model field on an ordinary queryset, but
+        allows it after ``values()``, where collisions are judged against the selected names -- so
+        a ``base_queryset`` can shadow a field this way. Ordering on the shadowed name then drags
+        the annotation's reverse relation into the ``GROUP BY`` and splits the count.
+        """
+        class ShadowBase(DatatableTable):
+            def base_queryset(self):
+                return (Company.objects.values('id').annotate(order=F('person__first_name'))
+                        .values('id'))
+
+        table = ShadowBase('companies', model=Company)
+        table.add_columns('id', 'people')
+        acme = Company.objects.get(name='Acme')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            built = table.get_query()
+            self.assertIn('order', built.query.annotations)
+            self.assertEqual(table.default_order_by(built), [])
+            self.assertEqual([r for r in built if r['id'] == acme.pk],
+                             [{'id': acme.pk, 'people': Person.objects.filter(company=acme).count()}])
+
     # ---- what counts as a single-valued term ---------------------------------------
 
     def test_ordering_through_a_multi_valued_relation_is_refused(self):
@@ -1549,5 +1593,7 @@ class TestModelOrderingFallback(TestCase):
             for term in ('first_name', '-first_name', 'pk', 'company_id', 'company__pk'):
                 self.assertTrue(table.ordering_term_is_single_valued(term), term)
             for term in ('?', '', 'no_such_field', 'company__person__first_name',
+                         # an attname can be traversed too, and means what the field name means
+                         'company_id__person__first_name',
                          'company', Upper('first_name')):
                 self.assertFalse(table.ordering_term_is_single_valued(term), term)
