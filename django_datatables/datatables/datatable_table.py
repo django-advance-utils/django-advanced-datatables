@@ -7,7 +7,6 @@ from typing import TypeVar, Dict
 from ajax_helpers.utils import random_string
 from django.core.exceptions import FieldDoesNotExist
 from django.db import models
-from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpResponse, JsonResponse
 from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
@@ -177,7 +176,8 @@ class DatatableTable:
         ``get_query`` annotates before this runs, and Django refuses ``annotate()`` after
         ``union()``. It is only reachable after the hooks, which is where an explicit ``order_by``
         would meet it too.
-        * an ordering term that is not single-valued; see ``ordering_term_is_single_valued``.
+        * an ordering term that is not a plain local column; see
+          ``ordering_term_is_a_local_column``.
         * a table with no model behind it, which has no ordering to inherit.
         """
         if self.model is None or self.distinct is not None:
@@ -193,7 +193,7 @@ class DatatableTable:
         annotations = getattr(built, 'annotations', None) or {}
         if any(term.lstrip('-+') in annotations for term in ordering if isinstance(term, str)):
             return []
-        if not all(self.ordering_term_is_single_valued(term) for term in ordering):
+        if not all(self.ordering_term_is_a_local_column(term) for term in ordering):
             return []
         return ordering
 
@@ -220,62 +220,42 @@ class DatatableTable:
                        and getattr(expression, 'alias', None) == base_table
                        for expression in group_by)
 
-    def ordering_term_is_single_valued(self, term, model=None, seen=None):
-        """Can ``term`` be ordered on without multiplying a record's rows?
+    def ordering_term_is_a_local_column(self, term):
+        """Is ``term`` a plain column on this model's own table?
 
-        True for a plain field, and for one reached through forward relations only -- those are
-        many-to-one, so a record still joins to a single row. False for anything that walks a
-        reverse foreign key or a many-to-many, for ``'?'``, and for an expression rather than a
-        field path, which cannot be inspected here.
+        The term has to name a field of this model that is concrete and not a relation. A path
+        drops out of that on its own -- ``get_field`` does not resolve ``company__name``, and
+        Django does not allow ``__`` in a field name -- and so do ``'?'`` and an expression, which
+        are not names at all. A primary key that is itself a relation (a ``OneToOneField`` with
+        ``primary_key=True``) is refused by the same test.
 
-        A term that *ends* on a relation is not the plain column it looks like: Django expands it
-        with the related model's own ``Meta.ordering``, so ``['company']`` can mean
-        ``company__person__first_name`` and repeat a record once per related row. That ordering is
-        checked in turn, with ``seen`` carrying the path taken so two models ordering through each
-        other stop rather than loop. The raw column spellings do not expand: ``company__pk``, and
-        ``company_id``, which ``get_field`` answers with the foreign key rather than raising, so
-        the term has to be compared with the field's ``attname`` -- and only at the end of the
-        path, since Django lets an attname be traversed as well, and
-        ``company_id__person__first_name`` means what ``company__person__first_name`` means.
+        That rule is narrow on purpose. Ordering on a local column adds no join, so it cannot
+        multiply a record's rows, and it brings nothing into a ``GROUP BY`` that the query did not
+        already have -- which leaves only properties of the *query* to check, and those are a
+        closed set. Anything with a relation in it is a different proposition: Django expands a
+        term that ends on a relation using the related model's own ordering, resolves a leading
+        component against the query's annotations before the model's fields, and will follow an
+        attname or a relational ``pk`` as a path. Each of those can quietly repeat a record or
+        split an aggregate, and deciding which are safe means re-implementing a good part of the
+        ORM's name resolution. A model ordered through a relation therefore keeps the behaviour it
+        has today -- no inherited ordering -- rather than being guessed at.
         """
         if not isinstance(term, str):
             return False
         term = term.lstrip('-+')
-        if not term or term == '?':
+        if not term:
             return False
-        model = model if model is not None else self.model
-        seen = seen if seen is not None else frozenset()
-        field = None
-        parts = term.split(LOOKUP_SEP)
-        for index, part in enumerate(parts):
-            if model is None:
-                return False
-            if part == 'pk':
-                return True
+        meta = getattr(self.model, '_meta', None)
+        if meta is None:
+            return False
+        if term == 'pk':
+            field = meta.pk
+        else:
             try:
-                field = model._meta.get_field(part)
+                field = meta.get_field(term)
             except (FieldDoesNotExist, AttributeError):
                 return False
-            if field.many_to_many or field.one_to_many:
-                return False
-            if (index == len(parts) - 1 and field.is_relation
-                    and part == getattr(field, 'attname', None) != field.name):
-                # Ends on the foreign key's own column ('company_id'): a plain value, which Django
-                # does not expand through the related model. Only true at the end of the path --
-                # 'company_id__person__first_name' is a traversal and resolves like 'company__...'.
-                return True
-            model = field.related_model if field.is_relation else None
-        if field is None or not field.is_relation:
-            return True
-        related = field.related_model
-        related_ordering = list(getattr(getattr(related, '_meta', None), 'ordering', None) or ())
-        if not related_ordering:
-            return True
-        if related in seen:
-            return False
-        seen = seen | {related}
-        return all(self.ordering_term_is_single_valued(t, model=related, seen=seen)
-                   for t in related_ordering)
+        return bool(getattr(field, 'concrete', False)) and not field.is_relation
 
     def get_query(self, **_kwargs):
         annotations = {}

@@ -1536,64 +1536,57 @@ class TestModelOrderingFallback(TestCase):
             self.assertEqual([r for r in built if r['id'] == acme.pk],
                              [{'id': acme.pk, 'people': Person.objects.filter(company=acme).count()}])
 
-    # ---- what counts as a single-valued term ---------------------------------------
+    # ---- what counts as an orderable term ------------------------------------------
 
-    def test_ordering_through_a_multi_valued_relation_is_refused(self):
-        """A reverse FK or m2m multiplies a record's rows; on an aggregate that splits the row
-        and recomputes the aggregate over each share."""
+    def test_an_ordering_through_a_relation_is_not_inherited(self):
+        """Anything with a relation in it keeps today's behaviour: no inherited ordering.
+
+        A reverse relation is the clearest reason -- it multiplies a record's rows, and on an
+        aggregate it splits the row and recomputes the count over each share -- but the rule
+        covers forward paths too, deliberately. See ``ordering_term_is_a_local_column``.
+        """
         table = DatatableTable('companies', model=Company)
         table.add_columns('name', 'people')
         acme = Company.objects.get(name='Acme')
         expected = [{'name': 'Acme', 'people': Person.objects.filter(company=acme).count()}]
         with mock.patch.object(Company._meta, 'ordering', ['person__first_name']):
-            self.assertFalse(table.ordering_term_is_single_valued('person__first_name'))
+            self.assertFalse(table.ordering_term_is_a_local_column('person__first_name'))
             self.assertEqual([r for r in table.get_query() if r['name'] == 'Acme'], expected)
 
-    def test_a_terminal_relation_is_judged_by_what_it_expands_to(self):
-        """Django expands ``['company']`` with Company's own ordering, so it can mean
-        ``company__person__first_name`` and repeat each person once per colleague."""
-        table = DatatableTable('people', model=Person)
-        table.add_columns('id', 'first_name')
-        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']), \
-                mock.patch.object(Person._meta, 'ordering', ['company']):
-            self.assertFalse(table.ordering_term_is_single_valued('company'))
-            self.assertEqual(len(list(table.get_query())), Person.objects.count())
-
-    def test_a_terminal_relation_whose_model_orders_safely_is_still_allowed(self):
+    def test_a_forward_relation_is_not_inherited_either(self):
+        # Django would expand ['company'] with Company's own ordering, so it is not the plain
+        # column it looks like. Out of scope rather than guessed at.
         table = DatatableTable('people', model=Person)
         table.add_columns('id', 'first_name')
         with mock.patch.object(Company._meta, 'ordering', ['name']), \
                 mock.patch.object(Person._meta, 'ordering', ['company']):
-            self.assertTrue(table.ordering_term_is_single_valued('company'))
-            self.assertEqual(self._ordering(table), ['company'])
+            self.assertFalse(table.ordering_term_is_a_local_column('company'))
+            self.assertEqual(self._ordering(table), [])
 
-    def test_an_ordering_that_returns_to_a_model_already_on_the_path_stops(self):
-        """Two models ordering through each other must not send the walk round for ever.
+    def test_a_primary_key_that_is_itself_a_relation_is_not_inherited(self):
+        """``pk`` is only a plain column when the primary key is one.
 
-        A real mutual cycle needs forward foreign keys both ways, which the demo models do not
-        have, so the guard is driven directly: with Company already on the path, a term reaching
-        it again has to come back False rather than recurse into its ordering.
+        A ``OneToOneField(primary_key=True)`` makes ``pk`` a relation, and Django will follow it
+        as a path, so it is refused like any other relation.
         """
         table = DatatableTable('people', model=Person)
-        with mock.patch.object(Company._meta, 'ordering', ['name']):
-            self.assertTrue(table.ordering_term_is_single_valued('company'))
-            self.assertFalse(table.ordering_term_is_single_valued(
-                'company', seen=frozenset({Company})))
+        self.assertTrue(table.ordering_term_is_a_local_column('pk'))
+        relational_pk = Person._meta.get_field('company')
+        with mock.patch.object(Person._meta, 'pk', relational_pk):
+            self.assertFalse(table.ordering_term_is_a_local_column('pk'))
 
-    def test_two_terms_reaching_the_same_model_are_not_a_cycle(self):
-        """``seen`` is the path taken to get here, not every model already looked at."""
+    def test_what_counts_as_a_local_column(self):
         table = DatatableTable('people', model=Person)
-        with mock.patch.object(Person._meta, 'ordering', ['company', 'company']), \
-                mock.patch.object(Company._meta, 'ordering', ['name']):
-            self.assertTrue(table.ordering_term_is_single_valued('company'))
-
-    def test_what_counts_as_a_single_valued_ordering_term(self):
-        table = DatatableTable('people', model=Person)
-        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']):
-            for term in ('first_name', '-first_name', 'pk', 'company_id', 'company__pk'):
-                self.assertTrue(table.ordering_term_is_single_valued(term), term)
-            for term in ('?', '', 'no_such_field', 'company__person__first_name',
-                         # an attname can be traversed too, and means what the field name means
-                         'company_id__person__first_name',
-                         'company', Upper('first_name')):
-                self.assertFalse(table.ordering_term_is_single_valued(term), term)
+        for term in ('first_name', '-first_name', '+first_name', 'pk', 'date_entered'):
+            self.assertTrue(table.ordering_term_is_a_local_column(term), term)
+        for term in (
+                '?', '', 'no_such_field',
+                'company',                       # a relation, expanded by its model's ordering
+                'company_id',                    # the raw column, but get_field answers the FK
+                'company__pk', 'company__name',  # any path at all
+                'company__person__first_name',
+                'company_id__person__first_name',  # an attname can be traversed too
+                'pk__person__first_name',          # so can a relational pk
+                Upper('first_name'),               # an expression, not a name
+        ):
+            self.assertFalse(table.ordering_term_is_a_local_column(term), term)
