@@ -5,7 +5,9 @@ from inspect import isclass
 from typing import TypeVar, Dict
 
 from ajax_helpers.utils import random_string
+from django.core.exceptions import FieldDoesNotExist
 from django.db import models
+from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpResponse, JsonResponse
 from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
@@ -137,6 +139,126 @@ class DatatableTable:
         """
         return getattr(self.model, self.query_manager)
 
+    def default_order_by(self, query=None, grouped=False):
+        """The model's own ``Meta.ordering``, for a table that has not asked for a sort.
+
+        ``get_query`` ended in ``.order_by(*self.order_by)``, and ``order_by`` defaults to ``[]``.
+        With no sort configured that is ``.order_by()`` with no arguments, which in Django does not
+        mean "no preference" -- it throws ordering away, ``Meta.ordering`` included. The table was
+        then a paged view over an unordered query, so which rows landed on which page was whatever
+        the database happened to scan first, and it moved as rows were written: a page could show a
+        row twice, or miss one.
+
+        The fallback goes on where an explicit ``order_by`` goes on, and behaves exactly like one.
+        That is the whole rule, and it is deliberate: a table whose model states an ordering now
+        behaves as though it had asked for that ordering itself. Whatever a hook does afterwards --
+        order the query its own way, slice it, combine it -- it does to a table that already had a
+        sort, which the library has always allowed.
+
+        Returns ``[]`` -- today's behaviour, untouched -- where putting an ordering on could change
+        the results rather than merely arrange them:
+
+        * ``grouped``, or a query that already groups. On a ``values()`` + ``annotate()`` aggregate
+          Django folds the ordering fields into the ``GROUP BY``, which regroups the rows and moves
+          the numbers. This is the real risk in defaulting an ordering for every table, because an
+          explicit sort is a choice made about one grid and this is not.
+          ``server_side_filters.ServerSideFilter.get_facets`` leans on the same rule in the other
+          direction, clearing the ordering to keep it out of its facet counts.
+        * ``distinct``, where the database requires the ordering to agree with the distinct fields.
+
+        Two things deliberately have no guard, because neither can reach this point. A combined
+        query cannot: ``get_query`` annotates before this runs, and Django refuses
+        ``annotate()`` after ``union()``. Nor can an annotation shadowing one of the ordering
+        names: Django rejects an annotation that collides with a model field, and ``Meta.ordering``
+        names model fields. Both are only reachable after the hooks, which is where an explicit
+        ``order_by`` would meet them too.
+        * an ordering term that is not single-valued; see ``ordering_term_is_single_valued``.
+        * a table with no model behind it, which has no ordering to inherit.
+        """
+        if self.model is None or self.distinct is not None:
+            return []
+        ordering = list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
+        if not ordering:
+            return []
+        if grouped or self.query_groups_rows(getattr(query, 'query', None)):
+            return []
+        if not all(self.ordering_term_is_single_valued(term) for term in ordering):
+            return []
+        return ordering
+
+    def query_groups_rows(self, built):
+        """Does ``built`` put several records on one row?
+
+        ``False`` only for a query that does not group at all, and for one grouped by a key that
+        carries the **base table's** primary key -- there the grouping is one row per record, so an
+        ordering field joining the ``GROUP BY`` cannot split anything.
+
+        An empty ``group_by`` tuple is an aggregate with no grouping keys -- a single total row --
+        not an ungrouped query, so only ``None`` counts as ungrouped. And a primary key belonging
+        to another alias is the *joined* row's, from a query that rejoins this model, so the field
+        alone does not settle it.
+        """
+        group_by = getattr(built, 'group_by', None)
+        if group_by is None:
+            return False
+        if group_by is True:
+            return True
+        pk = self.model._meta.pk
+        base_table = getattr(built, 'base_table', None)
+        return not any(getattr(expression, 'target', None) is pk
+                       and getattr(expression, 'alias', None) == base_table
+                       for expression in group_by)
+
+    def ordering_term_is_single_valued(self, term, model=None, seen=None):
+        """Can ``term`` be ordered on without multiplying a record's rows?
+
+        True for a plain field, and for one reached through forward relations only -- those are
+        many-to-one, so a record still joins to a single row. False for anything that walks a
+        reverse foreign key or a many-to-many, for ``'?'``, and for an expression rather than a
+        field path, which cannot be inspected here.
+
+        A term that *ends* on a relation is not the plain column it looks like: Django expands it
+        with the related model's own ``Meta.ordering``, so ``['company']`` can mean
+        ``company__person__first_name`` and repeat a record once per related row. That ordering is
+        checked in turn, with ``seen`` carrying the path taken so two models ordering through each
+        other stop rather than loop. The raw column spellings do not expand: ``company__pk``, and
+        ``company_id``, which ``get_field`` answers with the foreign key rather than raising, so
+        the term has to be compared with the field's ``attname``.
+        """
+        if not isinstance(term, str):
+            return False
+        term = term.lstrip('-+')
+        if not term or term == '?':
+            return False
+        model = model if model is not None else self.model
+        seen = seen if seen is not None else frozenset()
+        field = None
+        for part in term.split(LOOKUP_SEP):
+            if model is None:
+                return False
+            if part == 'pk':
+                return True
+            try:
+                field = model._meta.get_field(part)
+            except (FieldDoesNotExist, AttributeError):
+                return False
+            if field.many_to_many or field.one_to_many:
+                return False
+            if field.is_relation and part == getattr(field, 'attname', None) != field.name:
+                return True
+            model = field.related_model if field.is_relation else None
+        if field is None or not field.is_relation:
+            return True
+        related = field.related_model
+        related_ordering = list(getattr(getattr(related, '_meta', None), 'ordering', None) or ())
+        if not related_ordering:
+            return True
+        if related in seen:
+            return False
+        seen = seen | {related}
+        return all(self.ordering_term_is_single_valued(t, model=related, seen=seen)
+                   for t in related_ordering)
+
     def get_query(self, **_kwargs):
         annotations = {}
         annotations_value = {}
@@ -157,7 +279,11 @@ class DatatableTable:
                      else query.filter(**self.initial_filter))
         if annotations_value:
             query = query.annotate(**annotations_value).values(*[f for f in annotations_value])
-        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields()).order_by(*self.order_by)
+        query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields())
+        # A table that set no sort takes the model's ordering rather than losing it, put on
+        # here so that it behaves exactly as an explicit order_by would.
+        query = query.order_by(*(self.order_by or self.default_order_by(
+            query, grouped=bool(self.initial_values or annotations_value))))
         if isinstance(self.filter, models.Q):
             query = query.filter(self.filter)
         else:

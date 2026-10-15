@@ -1,4 +1,5 @@
 import base64
+from unittest import mock
 import datetime
 import inspect
 import json
@@ -8,7 +9,7 @@ from urllib.parse import urlencode
 
 from ajax_helpers.mixins import AjaxHelpers
 from django.contrib.auth.models import AnonymousUser
-from django.db.models import Q
+from django.db.models import Count, F, Q, Value
 from django.db.models.functions import Upper
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
@@ -1348,3 +1349,205 @@ class TestManyToManyThroughModelPath(TestCase):
         rows = self.table.get_table_array(RequestFactory().get('/'), self.table.get_query())
         tags = {row[1]: sorted(Tags.objects.get(pk=pk).tag for pk in row[2]) for row in rows}
         self.assertEqual(tags, {'Alice': ['Blue', 'Red'], 'Bob': ['Blue', 'Red'], 'Carol': ['Red'], 'Dave': []})
+
+
+class TestModelOrderingFallback(TestCase):
+    """A table that asks for no sort inherits the model's ``Meta.ordering`` instead of losing it.
+
+    ``get_query`` ended with ``.order_by(*self.order_by)``. With no sort configured that is
+    ``.order_by()`` with no arguments, which in Django clears ordering outright rather than meaning
+    "no preference", so every such table was a paged view over an unordered query.
+
+    The fallback is applied exactly where an explicit ``order_by`` is applied, so a table that
+    inherits one behaves like a table that set one. These tests pin both halves of that: the
+    inheriting, and the cases where putting an ordering on would change results rather than
+    arrange them.
+    """
+
+    def setUp(self):
+        make_data()
+
+    @staticmethod
+    def _ordering(table):
+        return list(table.get_query().query.order_by)
+
+    # ---- the fallback itself -------------------------------------------------------
+
+    def test_model_ordering_is_used_when_the_table_sets_no_sort(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
+            self.assertEqual(self._ordering(table), ['-first_name'])
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Dave', 'Carol', 'Bob', 'Alice'])
+
+    def test_a_sort_the_table_set_itself_still_wins(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        table.order_by = ['first_name']
+        with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Alice', 'Bob', 'Carol', 'Dave'])
+
+    def test_a_model_with_no_ordering_of_its_own_is_unchanged(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        self.assertFalse(Person._meta.ordering)
+        self.assertEqual(self._ordering(table), [])
+
+    def test_a_table_with_no_model_has_nothing_to_inherit(self):
+        self.assertEqual(DatatableTable('no_model').default_order_by(), [])
+
+    def test_a_capped_table_is_ordered_before_its_slice(self):
+        # max_records slices, and the fallback goes on before that, so the rows taken are the top
+        # of the ordering rather than an arbitrary set. It over-fetches by one.
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        table.max_records = 2
+        with mock.patch.object(Person._meta, 'ordering', ['-first_name']):
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Dave', 'Carol', 'Bob'])
+
+    # ---- grouping ------------------------------------------------------------------
+
+    def test_a_grouping_query_stays_unordered_so_its_group_by_cannot_move(self):
+        """On a ``values()`` + ``annotate()`` aggregate Django folds the ordering fields into the
+        ``GROUP BY``, which regroups the rows and moves the numbers.
+
+        Two companies share a name and differ in ``order``. Grouped by name they are one row, and
+        would split into two if the model's ``['order']`` ordering reached that ``GROUP BY``.
+        """
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+        table = DatatableTable('companies', model=Company)
+        table.add_columns('name', 'people')
+        table.initial_values = ['name']
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            self.assertEqual(self._ordering(table), [])
+            self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
+
+    def test_grouping_that_still_carries_the_pk_keeps_the_fallback(self):
+        # An aggregate column groups by the model's pk, which is one row per record: ordering
+        # cannot split it, so the table keeps its ordering.
+        table = DatatableTable('companies', model=Company)
+        table.add_columns('name', 'people')
+        with mock.patch.object(Company._meta, 'ordering', ['name']):
+            self.assertFalse(table.query_groups_rows(table.get_query().query))
+            self.assertEqual(self._ordering(table), ['name'])
+
+    def test_grouping_from_base_queryset_is_caught_too(self):
+        """``base_queryset`` is a public hook and may hand back an aggregate of its own."""
+        Company.objects.create(name='Duplicate', order=1)
+        Company.objects.create(name='Duplicate', order=2)
+
+        class GroupedBaseTable(DatatableTable):
+            def base_queryset(self):
+                return Company.objects.values('name').annotate(people=Count('person__id'))
+
+        table = GroupedBaseTable('companies', model=Company)
+        table.add_columns('name')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            self.assertEqual(self._ordering(table), [])
+            self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
+
+    def test_an_aggregate_with_no_grouping_keys_is_caught(self):
+        """``group_by == ()`` is a single total row, not an ungrouped query."""
+        class WholeTableTotalTable(DatatableTable):
+            def base_queryset(self):
+                return (Person.objects.annotate(bucket=Value(1)).values('bucket')
+                        .annotate(total=Count('id')).values('total'))
+
+        table = WholeTableTotalTable('people', model=Person)
+        table.add_columns('id')
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            built = table.get_query()
+            self.assertEqual(built.query.group_by, ())
+            self.assertTrue(table.query_groups_rows(built.query))
+            self.assertEqual(list(built.query.order_by), [])
+
+    def test_a_pk_from_another_alias_does_not_count_as_one_row_per_record(self):
+        """A query that rejoins this model groups by the *joined* row's pk, whose ``target`` is
+        still this model's pk field -- so the alias has to be the base table too."""
+        class RejoinTable(DatatableTable):
+            def base_queryset(self):
+                return Person.objects.values('company__person__pk').annotate(total=Count('pk'))
+
+        table = RejoinTable('people', model=Person)
+        table.add_columns('id')
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            built = table.get_query()
+            self.assertTrue(all(getattr(e, 'target', None) is Person._meta.pk
+                                and getattr(e, 'alias', None) != built.query.base_table
+                                for e in built.query.group_by))
+            self.assertTrue(table.query_groups_rows(built.query))
+            self.assertEqual(list(built.query.order_by), [])
+
+    # ---- distinct --------------------------------------------------------------------
+
+    def test_distinct_stays_unordered(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        table.distinct = ['first_name']
+        with mock.patch.object(Person._meta, 'ordering', ['-surname']):
+            self.assertEqual(table.default_order_by(), [])
+            self.assertEqual(self._ordering(table), [])
+
+    # ---- what counts as a single-valued term ---------------------------------------
+
+    def test_ordering_through_a_multi_valued_relation_is_refused(self):
+        """A reverse FK or m2m multiplies a record's rows; on an aggregate that splits the row
+        and recomputes the aggregate over each share."""
+        table = DatatableTable('companies', model=Company)
+        table.add_columns('name', 'people')
+        acme = Company.objects.get(name='Acme')
+        expected = [{'name': 'Acme', 'people': Person.objects.filter(company=acme).count()}]
+        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']):
+            self.assertFalse(table.ordering_term_is_single_valued('person__first_name'))
+            self.assertEqual([r for r in table.get_query() if r['name'] == 'Acme'], expected)
+
+    def test_a_terminal_relation_is_judged_by_what_it_expands_to(self):
+        """Django expands ``['company']`` with Company's own ordering, so it can mean
+        ``company__person__first_name`` and repeat each person once per colleague."""
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']), \
+                mock.patch.object(Person._meta, 'ordering', ['company']):
+            self.assertFalse(table.ordering_term_is_single_valued('company'))
+            self.assertEqual(len(list(table.get_query())), Person.objects.count())
+
+    def test_a_terminal_relation_whose_model_orders_safely_is_still_allowed(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Company._meta, 'ordering', ['name']), \
+                mock.patch.object(Person._meta, 'ordering', ['company']):
+            self.assertTrue(table.ordering_term_is_single_valued('company'))
+            self.assertEqual(self._ordering(table), ['company'])
+
+    def test_an_ordering_that_returns_to_a_model_already_on_the_path_stops(self):
+        """Two models ordering through each other must not send the walk round for ever.
+
+        A real mutual cycle needs forward foreign keys both ways, which the demo models do not
+        have, so the guard is driven directly: with Company already on the path, a term reaching
+        it again has to come back False rather than recurse into its ordering.
+        """
+        table = DatatableTable('people', model=Person)
+        with mock.patch.object(Company._meta, 'ordering', ['name']):
+            self.assertTrue(table.ordering_term_is_single_valued('company'))
+            self.assertFalse(table.ordering_term_is_single_valued(
+                'company', seen=frozenset({Company})))
+
+    def test_two_terms_reaching_the_same_model_are_not_a_cycle(self):
+        """``seen`` is the path taken to get here, not every model already looked at."""
+        table = DatatableTable('people', model=Person)
+        with mock.patch.object(Person._meta, 'ordering', ['company', 'company']), \
+                mock.patch.object(Company._meta, 'ordering', ['name']):
+            self.assertTrue(table.ordering_term_is_single_valued('company'))
+
+    def test_what_counts_as_a_single_valued_ordering_term(self):
+        table = DatatableTable('people', model=Person)
+        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']):
+            for term in ('first_name', '-first_name', 'pk', 'company_id', 'company__pk'):
+                self.assertTrue(table.ordering_term_is_single_valued(term), term)
+            for term in ('?', '', 'no_such_field', 'company__person__first_name',
+                         'company', Upper('first_name')):
+                self.assertFalse(table.ordering_term_is_single_valued(term), term)
