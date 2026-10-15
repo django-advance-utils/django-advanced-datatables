@@ -192,18 +192,32 @@ class DatatableTable:
     def groups_coarser_than_a_row(self, query):
         """Does ``query`` group several records into one row?
 
-        ``False`` for an ungrouped query, and for one grouped by a key that carries the model's
-        primary key -- there the grouping is one row per record, so adding a single-valued
-        ordering field to the ``GROUP BY`` cannot split anything.
+        ``False`` only for a query that does not group at all, and for one whose key carries the
+        **base table's** primary key -- there the grouping is one row per record, so adding a
+        single-valued ordering field to the ``GROUP BY`` cannot split anything.
+
+        Two things this deliberately does not treat as ungrouped:
+
+        * an empty ``group_by`` tuple. That is an aggregate with no grouping keys -- a single total
+          row -- not an ungrouped query, and an ordering field added to it becomes the grouping key
+          and breaks the total into one row per value. Only ``None`` means ungrouped.
+        * a primary key belonging to some other alias. A query that rejoins this model, through a
+          self-referencing relation or back through a related one, groups by the *joined* row's pk,
+          whose ``target`` is still this model's pk field. That group holds many base rows, so the
+          field alone does not settle it and the alias has to match the base table as well.
         """
-        group_by = getattr(getattr(query, 'query', None), 'group_by', None)
-        if not group_by:
+        built = getattr(query, 'query', None)
+        group_by = getattr(built, 'group_by', None)
+        if group_by is None:
             return False
         if group_by is True:
             # "group by whatever is selected", which we cannot inspect here. Assume the worst.
             return True
         pk = self.model._meta.pk
-        return not any(getattr(expression, 'target', None) is pk for expression in group_by)
+        base_table = getattr(built, 'base_table', None)
+        return not any(getattr(expression, 'target', None) is pk
+                       and getattr(expression, 'alias', None) == base_table
+                       for expression in group_by)
 
     def ordering_term_is_single_valued(self, term):
         """Can ``term`` be ordered on without multiplying a record's rows?

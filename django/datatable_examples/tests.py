@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from ajax_helpers.mixins import AjaxHelpers
 from django.contrib.auth.models import AnonymousUser
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Value
 from django.db.models.functions import Upper
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
@@ -1580,6 +1580,55 @@ class TestModelOrderingFallback(TestCase):
             self.assertEqual(list(table.get_query().query.order_by), ['-first_name'])
             self.assertEqual([r['first_name'] for r in table.get_query()],
                              ['Dave', 'Carol', 'Bob', 'Alice'])
+
+    def test_an_aggregate_with_no_grouping_keys_is_caught(self):
+        """``group_by == ()`` is a single total row, not an ungrouped query.
+
+        An ordering field added to it becomes the grouping key, so one total of 3 turns into
+        three totals of 1. Only ``None`` means ungrouped.
+        """
+        class WholeTableTotalTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return (query.annotate(bucket=Value(1)).values('bucket')
+                        .annotate(total=Count('id')).values('total'))
+
+        table = WholeTableTotalTable('people', model=Person)
+        table.add_columns('id')
+        expected = [{'total': Person.objects.count()}]
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            built = table.get_query()
+            self.assertEqual(built.query.group_by, ())
+            self.assertTrue(table.groups_coarser_than_a_row(built))
+            self.assertEqual(list(built), expected)
+
+    def test_a_pk_from_another_alias_does_not_count_as_one_row_per_record(self):
+        """A query that rejoins this model groups by the *joined* row's pk.
+
+        Its ``target`` is still this model's pk field, so the field alone cannot settle it -- the
+        alias has to be the base table too. Here ``company__person__pk`` rejoins Person as T3;
+        without the alias check the fallback is allowed and the three rows become nine, each
+        total dropping from 3 to 1.
+        """
+        class RejoinTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.values('company__person__pk').annotate(total=Count('pk'))
+
+        table = RejoinTable('people', model=Person)
+        table.add_columns('id')
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            built = table.get_query()
+            grouped_on = [(getattr(e, 'alias', None), getattr(e, 'target', None) is Person._meta.pk)
+                          for e in built.query.group_by]
+            # the pk is this model's, but on a joined alias
+            self.assertTrue(all(is_pk and alias != built.query.base_table
+                                for alias, is_pk in grouped_on))
+            self.assertTrue(table.groups_coarser_than_a_row(built))
+            self.assertEqual(list(built.query.order_by), [])
+            # Same rows and totals as the grouping produces on its own: the fallback added nothing.
+            baseline = Person.objects.values('company__person__pk').annotate(total=Count('pk'))
+            self.assertEqual(sorted(map(str, built)), sorted(map(str, baseline)))
 
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])
