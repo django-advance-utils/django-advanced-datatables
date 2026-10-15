@@ -166,11 +166,19 @@ class DatatableTable:
           aggregate column.
         * ``distinct``, set on the table or reached through a hook, where the database requires
           the ordering to agree with the distinct fields.
+        * a combined query (union, intersection, difference), whose result carries only the
+          columns its branches selected.
+        * an ordering name that the query has annotated or aliased, which Django resolves
+          before the model's own fields.
         * a table with no model behind it, which has no ordering to inherit.
         """
         if self.distinct is not None or self.model is None:
             return []
         built = getattr(query, 'query', None)
+        if getattr(built, 'combinator', None):
+            # union / intersection / difference. The compound result only has the columns the
+            # branches selected, and ordering on anything else is rejected by the database.
+            return []
         if built is not None and (built.distinct or built.distinct_fields):
             # Distinctness can also arrive through base_queryset or either hook. Ordering on a
             # column outside a DISTINCT select either drags it into the select -- bringing the
@@ -178,6 +186,12 @@ class DatatableTable:
             return []
         ordering = list(getattr(getattr(self.model, '_meta', None), 'ordering', None) or ())
         if not ordering:
+            return []
+        annotations = getattr(built, 'annotations', None) or {}
+        if any(term.lstrip('-+') in annotations for term in ordering if isinstance(term, str)):
+            # Django resolves an ordering name against the query's annotations and aliases before
+            # the model's own fields, so a hook's alias can shadow the field this ordering meant
+            # and drag its expression -- a reverse relation, say -- into the query.
             return []
         if not all(self.ordering_term_is_single_valued(term) for term in ordering):
             # A term that walks a reverse FK or a m2m multiplies a record's rows -- on a grouped
@@ -277,7 +291,10 @@ class DatatableTable:
         if related_model in seen:
             # Two models ordering through each other. Refuse rather than follow it round.
             return False
-        seen.add(related_model)
+        # A copy per branch: `seen` is the path taken to get here, not every model already looked
+        # at. Sharing one set would make a second term reaching the same model look like a cycle,
+        # so two foreign keys onto the same table would lose a perfectly safe ordering.
+        seen = seen | {related_model}
         return all(self.ordering_term_is_single_valued(t, model=related_model, seen=seen)
                    for t in ordering)
 

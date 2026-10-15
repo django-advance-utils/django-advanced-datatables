@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from ajax_helpers.mixins import AjaxHelpers
 from django.contrib.auth.models import AnonymousUser
-from django.db.models import Count, Q, Value
+from django.db.models import Count, F, Q, Value
 from django.db.models.functions import Upper
 from django.http import QueryDict
 from django.test import RequestFactory, TestCase
@@ -1686,6 +1686,55 @@ class TestModelOrderingFallback(TestCase):
         table.add_columns('id', 'first_name')
         with mock.patch.object(Person._meta, 'ordering', ['first_name']):
             self.assertEqual(len(list(table.get_query())), 2)
+
+    def test_a_combined_query_is_left_unordered(self):
+        """A union's result carries only the columns its branches selected, so ordering on
+        anything else is rejected by the database -- previously this table worked."""
+        class UnionTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.union(query)
+
+        table = UnionTable('people', model=Person)
+        table.add_columns('first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['surname']):
+            built = table.get_query()
+            self.assertEqual(built.query.combinator, 'union')
+            self.assertEqual(table.default_order_by(built), [])
+            self.assertTrue(list(built))
+
+    def test_an_ordering_name_the_query_has_aliased_is_refused(self):
+        """Django resolves an ordering name against the query's annotations and aliases first.
+
+        Here the hook aliases ``name`` to a reverse relation, so Company's ``['name']`` ordering
+        no longer means the column it was written for: applying it drags each person into the
+        ``GROUP BY`` and splits the company's total.
+        """
+        class AliasTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return (query.values('id').alias(name=F('person__first_name'))
+                        .annotate(total=Count('person__id')))
+
+        table = AliasTable('companies', model=Company)
+        table.add_columns('name')
+        acme = Company.objects.get(name='Acme')
+        with mock.patch.object(Company._meta, 'ordering', ['name']):
+            built = table.get_query()
+            self.assertIn('name', built.query.annotations)
+            self.assertEqual(table.default_order_by(built), [])
+            self.assertEqual([r for r in built if r['id'] == acme.pk],
+                             [{'id': acme.pk, 'total': Person.objects.filter(company=acme).count()}])
+
+    def test_two_terms_reaching_the_same_model_are_not_a_cycle(self):
+        """``seen`` is the path taken to get here, not every model already looked at.
+
+        Sharing one set across sibling terms makes the second reach of a model look like a cycle,
+        so two foreign keys onto the same table would lose a safe ordering.
+        """
+        table = DatatableTable('people', model=Person)
+        with mock.patch.object(Person._meta, 'ordering', ['company', 'company']),                 mock.patch.object(Company._meta, 'ordering', ['name']):
+            self.assertTrue(table.related_ordering_is_single_valued(Person, set()))
 
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])
