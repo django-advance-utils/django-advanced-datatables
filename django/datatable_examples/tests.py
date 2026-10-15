@@ -1630,5 +1630,62 @@ class TestModelOrderingFallback(TestCase):
             baseline = Person.objects.values('company__person__pk').annotate(total=Count('pk'))
             self.assertEqual(sorted(map(str, built)), sorted(map(str, baseline)))
 
+    def test_a_terminal_relation_is_judged_by_what_it_expands_to(self):
+        """``['company']`` is not the plain column it looks like.
+
+        Django expands it with Company's own ``Meta.ordering``, so if that walks back down to
+        people it means ``company__person__first_name`` and repeats each person once per person
+        in their company -- three rows become nine.
+        """
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']),                 mock.patch.object(Person._meta, 'ordering', ['company']):
+            self.assertFalse(table.ordering_term_is_single_valued('company'))
+            self.assertEqual(len(list(table.get_query())), Person.objects.count())
+
+    def test_a_terminal_relation_whose_model_orders_safely_is_still_allowed(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Company._meta, 'ordering', ['name']),                 mock.patch.object(Person._meta, 'ordering', ['company']):
+            self.assertTrue(table.ordering_term_is_single_valued('company'))
+            self.assertEqual(list(self._ordering(table)), ['company'])
+
+    def test_orderings_that_cycle_between_models_do_not_loop(self):
+        table = DatatableTable('people', model=Person)
+        with mock.patch.object(Company._meta, 'ordering', ['person']),                 mock.patch.object(Person._meta, 'ordering', ['company']):
+            self.assertFalse(table.ordering_term_is_single_valued('company'))
+
+    def test_the_raw_foreign_key_column_does_not_expand(self):
+        # 'company_id' and 'company__pk' name a value, not the related model's ordering.
+        table = DatatableTable('people', model=Person)
+        with mock.patch.object(Company._meta, 'ordering', ['person__first_name']):
+            self.assertTrue(table.ordering_term_is_single_valued('company_id'))
+            self.assertTrue(table.ordering_term_is_single_valued('company__pk'))
+
+    def test_ordering_a_hook_put_in_extra_is_not_overwritten(self):
+        """``extra(order_by=...)`` is kept in ``extra_order_by``, not ``order_by``."""
+        class ExtraOrderTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query.extra(order_by=['-first_name'])
+
+        table = ExtraOrderTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            self.assertEqual([r['first_name'] for r in table.get_query()],
+                             ['Dave', 'Carol', 'Bob', 'Alice'])
+
+    def test_a_slice_a_hook_took_is_left_alone(self):
+        """Reordering a sliced queryset raises, so a table that worked before must keep working."""
+        class SlicingTable(DatatableTable):
+            @staticmethod
+            def extra_filters(query):
+                return query[:2]
+
+        table = SlicingTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        with mock.patch.object(Person._meta, 'ordering', ['first_name']):
+            self.assertEqual(len(list(table.get_query())), 2)
+
     def test_a_table_with_no_model_has_nothing_to_inherit(self):
         self.assertEqual(DatatableTable('no_model').default_order_by(), [])

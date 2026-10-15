@@ -219,20 +219,30 @@ class DatatableTable:
                        and getattr(expression, 'alias', None) == base_table
                        for expression in group_by)
 
-    def ordering_term_is_single_valued(self, term):
+    def ordering_term_is_single_valued(self, term, model=None, seen=None):
         """Can ``term`` be ordered on without multiplying a record's rows?
 
         True for a plain field on the model, and for one reached through forward relations only --
         those are many-to-one, so a record still joins to a single row. False for anything that
         walks a reverse foreign key or a many-to-many, for ``'?'``, and for an expression rather
         than a field path, which cannot be inspected here and is assumed to be the worst case.
+
+        A term that *ends* on a relation is not the plain column it looks like: Django expands it
+        with the related model's own ``Meta.ordering``, so ``['company']`` can mean
+        ``company__person__first_name`` and repeat a record once per related row. The related
+        ordering is therefore checked in turn, and ``seen`` stops two models that order through
+        each other from looping. A relation whose model declares no ordering stays safe -- Django
+        orders by the relation's own column -- as do the explicit ``company_id`` and
+        ``company__pk`` spellings, which do not expand at all.
         """
         if not isinstance(term, str):
             return False
         term = term.lstrip('-+')
         if not term or term == '?':
             return False
-        model = self.model
+        model = model if model is not None else self.model
+        seen = seen if seen is not None else set()
+        field = None
         for part in term.split(LOOKUP_SEP):
             if model is None:
                 return False
@@ -241,11 +251,35 @@ class DatatableTable:
             try:
                 field = model._meta.get_field(part)
             except (FieldDoesNotExist, AttributeError):
+                # 'company_id' is the foreign key's own column -- a plain value that Django does
+                # not expand through the related model.
+                if any(getattr(f, 'attname', None) == part
+                       for f in getattr(model._meta, 'concrete_fields', ())):
+                    return True
                 return False
             if field.many_to_many or field.one_to_many:
                 return False
+            if field.is_relation and part == getattr(field, 'attname', None) != field.name:
+                # Written as the raw column ('company_id'). get_field returns the foreign key for
+                # it, but Django orders on the column and does not expand the related ordering.
+                return True
             model = field.related_model if field.is_relation else None
-        return True
+        if field is None or not field.is_relation:
+            return True
+        return self.related_ordering_is_single_valued(field.related_model, seen)
+
+    def related_ordering_is_single_valued(self, related_model, seen):
+        """Is the ordering ``related_model`` would lend to a term that ends on it safe to borrow?"""
+        ordering = list(getattr(getattr(related_model, '_meta', None), 'ordering', None) or ())
+        if not ordering:
+            # Django orders by the relation's own column, which is one value per record.
+            return True
+        if related_model in seen:
+            # Two models ordering through each other. Refuse rather than follow it round.
+            return False
+        seen.add(related_model)
+        return all(self.ordering_term_is_single_valued(t, model=related_model, seen=seen)
+                   for t in ordering)
 
     def apply_default_ordering(self, query):
         """Put the model's own ordering on ``query`` when the table asked for no sort.
@@ -253,15 +287,21 @@ class DatatableTable:
         Called once the query is otherwise finished, so that grouping introduced anywhere --
         ``initial_values``, a column's ``annotations_value``, ``base_queryset`` or either of the
         ``extra_filters`` / ``view_filter`` hooks -- is in front of ``default_order_by``'s guard
-        rather than behind it. Returns ``query`` untouched when the table set its own sort, when
-        a hook ordered the query itself, or when the fallback is one of the cases that has to
-        stay unordered.
+        rather than behind it. Returns ``query`` untouched when the table set its own sort, when a
+        hook ordered or sliced the query itself, or when the fallback is one of the cases that has
+        to stay unordered.
         """
         if self.order_by:
             return query
-        if getattr(getattr(query, 'query', None), 'order_by', ()):
-            # A hook ordered the query itself. That is a deliberate choice about this table and
+        built = getattr(query, 'query', None)
+        if getattr(built, 'order_by', ()) or getattr(built, 'extra_order_by', ()):
+            # A hook ordered the query itself -- through order_by, or through extra(order_by=...),
+            # which is kept separately. Either is a deliberate choice about this table and
             # outranks a fallback taken from the model.
+            return query
+        if getattr(built, 'is_sliced', False):
+            # A hook sliced the query. Django will not reorder a sliced queryset, and raising here
+            # would break a table that worked before this fallback existed.
             return query
         order_by = self.default_order_by(query)
         return query.order_by(*order_by) if order_by else query
