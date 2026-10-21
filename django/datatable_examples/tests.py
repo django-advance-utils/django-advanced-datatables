@@ -1377,6 +1377,22 @@ class TestModelOrdering(TestCase):
         with mock.patch.object(Person._meta, 'ordering', ['-surname']):
             self.assertFalse(table.get_query().query.order_by)
 
+    def test_distinct_on_the_base_queryset_clears_ordering_too(self):
+        # distinct can arrive through base_queryset rather than table.distinct. The inherited
+        # ordering column joins the DISTINCT selection, so two companies sharing a name stop
+        # folding to one row.
+        Company.objects.create(name='Twin', order=1)
+        Company.objects.create(name='Twin', order=2)
+
+        class DistinctBase(DatatableTable):
+            def base_queryset(self):
+                return Company.objects.distinct()
+
+        table = DistinctBase('companies', model=Company)
+        table.add_columns('name')
+        with mock.patch.object(Company._meta, 'ordering', ['order']):
+            self.assertEqual([r['name'] for r in table.get_query()].count('Twin'), 1)
+
     def test_meta_ordering_does_not_split_grouped_rows(self):
         # Django ignores Meta.ordering on GROUP BY queries, so it cannot regroup an aggregate.
         Company.objects.create(name='Duplicate', order=1)
