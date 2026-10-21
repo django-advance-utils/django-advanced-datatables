@@ -16,6 +16,7 @@ from django_datatables.datatables.column_initialiser import ColumnInitialisor
 from django_datatables.datatables.datatable_error import DatatableError
 from django_datatables.filters import DatatableFilter
 from django_datatables.models import SavedState
+from django_datatables.permissions import is_permitted
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class DatatableTable:
 
     def __init__(self, table_id=None, model=None, table_options=None, table_classes=None, view=None, **kwargs):
         self.columns = []
+        self.refused_columns = set()
         self.table_id = table_id if table_id else random_string()
         self.table_options: Dict[KT, VT] = {'pageLength': 100}
         self.view = view
@@ -183,6 +185,8 @@ class DatatableTable:
             if c[0] == '-':
                 sort_order = 'desc'
                 c = c[1:]
+            if c in self.refused_columns:
+                continue
             self.table_options.setdefault('order', []).append([self.find_column(c)[1], sort_order])
 
     def add_column_options(self, column_names, options):
@@ -244,6 +248,12 @@ class DatatableTable:
         return SavedState.objects.filter(name=name, user_id=user.id,
                                          table_id=self.table_id, view_class=self.view.__class__.__name__).first()
 
+    def column_permitted(self, column):
+        if is_permitted(getattr(self.view, 'request', None), 'column', column.column_name, self):
+            return True
+        self.refused_columns.add(column.column_name)
+        return False
+
     def show_column(self, column):
         if not column.enabled:
             return False
@@ -270,7 +280,8 @@ class DatatableTable:
                 for nc in new_columns:
                     nc.order = order.get(nc.column_name, hidden_order)
                     hidden_order += 1
-            self.columns += [nc for nc in new_columns if (nc.enabled and self.show_column(nc))]
+            self.columns += [nc for nc in new_columns
+                             if (nc.enabled and self.column_permitted(nc) and self.show_column(nc))]
         if order:
             def sort_order(column):
                 return getattr(column, 'order', 9999)
@@ -436,6 +447,8 @@ class DatatableTable:
 
     def remove_columns(self, *column_names):
         for n in column_names:
+            if n in self.refused_columns:
+                continue
             del self.columns[self.find_column(n)[1]]
 
     def clear_table_menu_item(self):

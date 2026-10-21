@@ -360,6 +360,26 @@ table.table_options['ajax_url'] = '/custom/ajax/url/'
 table.table_options['row_href'] = [render_replace(column='id', html='/detail/%1%/')]
 ```
 
+### Column permissions
+
+Name a function in `settings.DJANGO_ADVANCED_PERMISSION_CHECK` and `add_columns` asks it about every
+column:
+
+```python
+DJANGO_ADVANCED_PERMISSION_CHECK = 'myproject.permissions.check'
+
+def check(request, kind, name, obj=None):  # kind 'column', name the column_name, obj the table
+    return not (name == 'margin' and obj.table_id == 'orders')
+```
+
+A refused column is left out of the table altogether: it is not drawn, not queried, not exported
+and not offered in the column chooser, so its data never reaches the browser. `sort()` and
+`remove_columns()` skip a refused column rather than failing (the names are in
+`table.refused_columns`). With the setting unset every column is added. A table built with
+`cache_data` caches one copy for everyone, so do not combine it with columns that differ by user.
+ajax-advanced-helpers and django-advanced-modals read the same setting, each
+with a `kind` of its own.
+
 ## Demo Application
 
 A Docker-based demo is included with sample data and 15+ examples covering filters, plugins, editing, rendering, and more.
