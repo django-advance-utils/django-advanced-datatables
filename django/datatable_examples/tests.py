@@ -1378,9 +1378,6 @@ class TestModelOrdering(TestCase):
             self.assertFalse(table.get_query().query.order_by)
 
     def test_distinct_on_the_base_queryset_clears_ordering_too(self):
-        # distinct can arrive through base_queryset rather than table.distinct. The inherited
-        # ordering column joins the DISTINCT selection, so two companies sharing a name stop
-        # folding to one row.
         Company.objects.create(name='Twin', order=1)
         Company.objects.create(name='Twin', order=2)
 
