@@ -158,9 +158,6 @@ class DatatableTable:
         if annotations_value:
             query = query.annotate(**annotations_value).values(*[f for f in annotations_value])
         query = query.annotate(**annotations).exclude(**self.exclude).values(*self.fields())
-        # self.distinct is not the only way the query is distinct: base_queryset can hand one
-        # back already distinct. An inherited ordering column then joins the DISTINCT selection
-        # and rows the table was folding together stop folding, so clear it for those too.
         built = query.query
         if self.order_by or self.distinct is not None or built.distinct or built.distinct_fields:
             query = query.order_by(*self.order_by)
