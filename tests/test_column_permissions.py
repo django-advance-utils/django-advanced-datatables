@@ -1,4 +1,5 @@
-"""Columns put to the project's permission check (``django_datatables.permissions``)."""
+import logging
+from types import SimpleNamespace
 
 import django
 import pytest
@@ -12,10 +13,12 @@ if not settings.configured:
     )
     django.setup()
 
+from django.core.exceptions import ImproperlyConfigured  # noqa: E402
 from django.test import override_settings  # noqa: E402
 
 from django_datatables.columns import ColumnBase  # noqa: E402
-from django_datatables.datatables import DatatableTable  # noqa: E402
+from django_datatables.datatables import DatatableError, DatatableTable, RefusedColumnError  # noqa: E402
+from django_datatables.filters import DatatableFilter  # noqa: E402
 
 CHECK = f'{__name__}.check'
 ASKED = []
@@ -23,7 +26,7 @@ REFUSED = set()
 
 
 def check(request, kind, name, obj=None):
-    ASKED.append((kind, name, obj.table_id))
+    ASKED.append((kind, name, obj.table_id, request))
     return name not in REFUSED
 
 
@@ -33,10 +36,9 @@ def reset():
     REFUSED.clear()
 
 
-def table():
-    return DatatableTable('orders').add_columns(
-        ColumnBase(column_name='name'), ColumnBase(column_name='price'), ColumnBase(column_name='margin')
-    )
+def table(*columns, view=None):
+    columns = columns or ('name', 'price', 'margin')
+    return DatatableTable('orders', view=view).add_columns(*[ColumnBase(column_name=c) for c in columns])
 
 
 def names(t):
@@ -54,7 +56,16 @@ def test_a_refused_column_is_left_out_and_each_is_asked_about_with_its_table():
     t = table()
 
     assert names(t) == ['name', 'price']
-    assert ('column', 'margin', 'orders') in ASKED
+    assert ('column', 'margin', 'orders', None) in ASKED
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_the_check_is_given_the_views_request():
+    request = object()
+
+    table(view=SimpleNamespace(request=request))
+
+    assert {a[3] for a in ASKED} == {request}
 
 
 @override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
@@ -75,3 +86,78 @@ def test_removing_a_refused_column_is_not_an_error():
     t.remove_columns('margin', 'price')
 
     assert names(t) == ['name']
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_refused_column_named_by_its_last_part_is_skipped_too():
+    REFUSED.add('Company/name')
+    t = table('Company/name', 'price')
+
+    t.sort('name', 'price')
+    t.remove_columns('name')
+
+    assert t.table_options['order'] == [[0, 'asc']]
+    assert names(t) == ['price']
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_permitted_column_wins_over_a_refused_one_with_the_same_last_part():
+    REFUSED.add('Company/name')
+    t = table('Company/name', 'name', 'price')
+
+    t.remove_columns('name')
+
+    assert names(t) == ['price']
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_looking_up_a_refused_column_raises_a_refused_column_error():
+    REFUSED.add('margin')
+    t = table()
+
+    with pytest.raises(RefusedColumnError):
+        t.column('margin')
+    with pytest.raises(DatatableError) as e:
+        t.column('missing')
+    assert not isinstance(e.value, RefusedColumnError)
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_js_filters_on_or_summing_a_refused_column_are_left_out_quietly(caplog):
+    REFUSED.add('margin')
+    t = table()
+
+    with caplog.at_level(logging.WARNING):
+        t.add_js_filters('pivot', 'margin', 'price')
+        t.add_js_filters('totals', 'name', sum_column='margin')
+        t.add_js_filters('totals', sum_column='margin')
+
+    assert [f.column.column_name for f in t.js_filter_list] == ['price']
+    assert caplog.records == []
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_filters_columns_leave_out_a_refused_one():
+    REFUSED.add('margin')
+    t = table()
+
+    f = DatatableFilter('pivot', t, columns=['name', 'margin', 'price'])
+
+    assert [c[1:] for c in f.column_titles()] == [('name', 0), ('price', 1)]
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_refused_id_column_is_warned_about(caplog):
+    REFUSED.add('id')
+    t = table('id', 'name')
+
+    with caplog.at_level(logging.WARNING):
+        assert t.setup_column_id() is None
+
+    assert 'refused the id column' in caplog.text
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK='no_such_module.check')
+def test_a_check_that_cannot_be_imported_names_the_setting():
+    with pytest.raises(ImproperlyConfigured, match='DJANGO_ADVANCED_PERMISSION_CHECK'):
+        table()

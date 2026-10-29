@@ -5,7 +5,7 @@ from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Count, JSONField, Q, Sum
 
 from django_datatables.columns.many_to_many import ManyToManyColumn
-from django_datatables.datatables.datatable_error import DatatableError
+from django_datatables.datatables.datatable_error import DatatableError, RefusedColumnError
 from django_datatables.filters import DatatableFilter
 
 logger = logging.getLogger(__name__)
@@ -357,6 +357,8 @@ class ServerTotalsFilter(ServerValuesFilter):
         # sum_column kwarg with the column index for template rendering.
         try:
             sum_col = datatable.find_column(sum_column)[0]
+        except RefusedColumnError:
+            raise
         except Exception:
             sum_col = None
         if (sum_col is None or not isinstance(sum_col.field, str) or 'calculated' in sum_col.options

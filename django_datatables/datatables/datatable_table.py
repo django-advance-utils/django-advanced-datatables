@@ -13,7 +13,7 @@ from django_menus.menu import MenuItem, HtmlMenu
 
 from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY
 from django_datatables.datatables.column_initialiser import ColumnInitialisor
-from django_datatables.datatables.datatable_error import DatatableError
+from django_datatables.datatables.datatable_error import DatatableError, RefusedColumnError
 from django_datatables.filters import DatatableFilter
 from django_datatables.models import SavedState
 from django_datatables.permissions import is_permitted
@@ -38,7 +38,7 @@ class DatatableTable:
 
     def __init__(self, table_id=None, model=None, table_options=None, table_classes=None, view=None, **kwargs):
         self.columns = []
-        self.refused_columns = set()
+        self.refused_columns = {}
         self.table_id = table_id if table_id else random_string()
         self.table_options: Dict[KT, VT] = {'pageLength': 100}
         self.view = view
@@ -110,10 +110,15 @@ class DatatableTable:
                 try:
                     self.js_filter_list.append(filter_class(name_or_template, self, column=self.find_column(c)[0],
                                                             **kwargs))
+                except RefusedColumnError:
+                    pass
                 except DatatableError as e:
                     logger.warning('Skipping js filter %r on column %r: %s', name_or_template, c, e)
         else:
-            self.js_filter_list.append(filter_class(name_or_template, self, **kwargs))
+            try:
+                self.js_filter_list.append(filter_class(name_or_template, self, **kwargs))
+            except RefusedColumnError:
+                pass
 
     def js_filter(self, name_or_template, column_id, **kwargs):
         return DatatableFilter(name_or_template, self, column=self.find_column(column_id)[0], **kwargs)
@@ -185,9 +190,10 @@ class DatatableTable:
             if c[0] == '-':
                 sort_order = 'desc'
                 c = c[1:]
-            if c in self.refused_columns:
-                continue
-            self.table_options.setdefault('order', []).append([self.find_column(c)[1], sort_order])
+            try:
+                self.table_options.setdefault('order', []).append([self.find_column(c)[1], sort_order])
+            except RefusedColumnError:
+                pass
 
     def add_column_options(self, column_names, options):
         if isinstance(column_names, str):
@@ -196,17 +202,29 @@ class DatatableTable:
             if c.column_name in column_names:
                 c.setup_kwargs(options)
 
-    def find_column(self, column_name, by_field=False):
+    @staticmethod
+    def match_column(columns, column_name, by_field=False):
         if not by_field:
-            for n, c in enumerate(self.columns):
+            for n, c in enumerate(columns):
                 if c.column_name == column_name:
                     return c, n
-        for n, c in enumerate(self.columns):
+        for n, c in enumerate(columns):
             if c.field == column_name:
                 return c, n
-        for n, c in enumerate(self.columns):
+        for n, c in enumerate(columns):
             if c.column_name.split('/')[-1] == column_name:
                 return c, n
+
+    def column_refused(self, column_name, by_field=False):
+        return (self.match_column(self.columns, column_name, by_field) is None
+                and self.match_column(list(self.refused_columns.values()), column_name, by_field) is not None)
+
+    def find_column(self, column_name, by_field=False):
+        found = self.match_column(self.columns, column_name, by_field)
+        if found:
+            return found
+        if self.match_column(list(self.refused_columns.values()), column_name, by_field):
+            raise RefusedColumnError(f'Column {column_name} was refused by the permission check')
         raise DatatableError('Unable to find column ' + column_name)
 
     def session_key(self):
@@ -251,7 +269,7 @@ class DatatableTable:
     def column_permitted(self, column):
         if is_permitted(getattr(self.view, 'request', None), 'column', column.column_name, self):
             return True
-        self.refused_columns.add(column.column_name)
+        self.refused_columns[column.column_name] = column
         return False
 
     def show_column(self, column):
@@ -329,6 +347,9 @@ class DatatableTable:
             try:
                 self.table_options['column_id'] = self.find_column('id', True)[1]
                 return self.columns[self.table_options['column_id']]
+            except RefusedColumnError:
+                logger.warning('The permission check refused the id column of table %r, so its rows cannot be '
+                               'refreshed or linked to', self.table_id)
             except DatatableError:
                 pass
         else:
@@ -447,9 +468,10 @@ class DatatableTable:
 
     def remove_columns(self, *column_names):
         for n in column_names:
-            if n in self.refused_columns:
-                continue
-            del self.columns[self.find_column(n)[1]]
+            try:
+                del self.columns[self.find_column(n)[1]]
+            except RefusedColumnError:
+                pass
 
     def clear_table_menu_item(self):
         return MenuItem(f"django_datatables.DataTables['{self.table_id}'].reset_table()", '',

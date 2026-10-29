@@ -61,6 +61,8 @@ class DatatableFilter:
         """Resolve the ``columns`` kwarg to a list of (title, column_name, column_no) tuples."""
         result = []
         for c in self.kwargs['columns']:
+            if self.datatable.column_refused(c):
+                continue
             column, column_no = self.datatable.find_column(c)
             result.append((column.title, column.column_name, column_no))
         return result

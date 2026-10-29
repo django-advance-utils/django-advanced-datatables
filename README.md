@@ -373,10 +373,17 @@ def check(request, kind, name, obj=None):  # kind 'column', name the column_name
 ```
 
 A refused column is left out of the table altogether: it is not drawn, not queried, not exported
-and not offered in the column chooser, so its data never reaches the browser. `sort()` and
-`remove_columns()` skip a refused column rather than failing (the names are in
-`table.refused_columns`). With the setting unset every column is added. A table built with
-`cache_data` caches one copy for everyone, so do not combine it with columns that differ by user.
+and not offered in the column chooser, so its data never reaches the browser. `sort()`,
+`remove_columns()` and `add_js_filters()` skip a refused column rather than failing, whether it is named
+in full, by field or by the last part of its name; a js filter that sums a refused column is left out
+as well. Anything else that looks a refused column up, such as `table.column()`, raises
+`RefusedColumnError`, a `DatatableError`. The refused columns are in `table.refused_columns`, keyed by
+name. Refusing the id column leaves rows that cannot be refreshed or linked to, and logs a warning.
+
+`request` is `None` for a table built without a view, such as one a project builds for tree-grid rows
+or an export, so a check should allow for that. With the setting unset every column is added. A table
+built with `cache_data` caches one copy for everyone, so do not combine it with columns that differ by
+user.
 ajax-advanced-helpers and django-advanced-modals read the same setting, each
 with a `kind` of its own.
 
