@@ -207,6 +207,32 @@ if (typeof django_datatables === 'undefined') {
             })
         }
 
+        // A full or blocked localStorage throws, and a table must still draw without its saved state.
+        function store_state(key, value) {
+            try {
+                localStorage.setItem(key, value);
+            } catch (e) {
+                try {
+                    Object.keys(localStorage).forEach(function (k) {
+                        if (k !== key && (k.indexOf('Datatable_') === 0 || k.indexOf('DataTables_') === 0)) {
+                            localStorage.removeItem(k);
+                        }
+                    });
+                    localStorage.setItem(key, value);
+                } catch (e) {
+                }
+            }
+        }
+
+        function read_state(key) {
+            try {
+                var data = localStorage.getItem(key);
+                return data ? JSON.parse(data) : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
         ajax_helpers.command_functions.get_datatable_state = function(command){
             command.data.val = JSON.stringify(django_datatables.DataTables[command.table_id].table.api().state());
             ajax_helpers.post_json({url:command.url, data: command.data});
@@ -216,7 +242,7 @@ if (typeof django_datatables === 'undefined') {
             state = JSON.parse(command.state)
             state.time = new Date().getTime()
             state.state_id = command.state_id
-            localStorage.setItem('DataTables_' + command.table_id + '_' + location.pathname, JSON.stringify(state));
+            store_state('DataTables_' + command.table_id + '_' + location.pathname, JSON.stringify(state));
         };
 
         var utilities = {
@@ -951,16 +977,13 @@ if (typeof django_datatables === 'undefined') {
                 data.columns.forEach((item, i) => {
                     item.name = tablesetup.tableOptions.columnDefs[i].name;
                 });
-                localStorage.setItem(tablesetup.local_storage_key, JSON.stringify(data));
+                store_state(tablesetup.local_storage_key, JSON.stringify(data));
             }
 
             this.get_key = function (settings) {
-                var data = localStorage.getItem(tablesetup.local_storage_key);
-                if (data) {
-                    data = JSON.parse(data);
-                    if (tablesetup.session_id == data.session_id) {
-                        return data;
-                    }
+                var data = read_state(tablesetup.local_storage_key);
+                if (data && tablesetup.session_id == data.session_id) {
+                    return data;
                 }
                 return tablesetup.state ? tablesetup.state: null;
             }
