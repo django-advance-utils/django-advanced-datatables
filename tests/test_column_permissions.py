@@ -13,12 +13,16 @@ if not settings.configured:
     )
     django.setup()
 
+import json  # noqa: E402
+
 from django.core.exceptions import ImproperlyConfigured  # noqa: E402
+from django.core.management import call_command  # noqa: E402
 from django.test import override_settings  # noqa: E402
 
 from django_datatables.columns import ColumnBase  # noqa: E402
-from django_datatables.datatables import DatatableError, DatatableTable, RefusedColumnError  # noqa: E402
+from django_datatables.datatables import DatatableError, DatatableTable, RefusedColumnError, ServerSideTable  # noqa: E402
 from django_datatables.filters import DatatableFilter  # noqa: E402
+from django_datatables.models import SavedState  # noqa: E402
 from django_datatables.plugins.colour_rows import ColourRows  # noqa: E402
 from django_datatables.reorder_datatable import OrderedDatatable  # noqa: E402
 
@@ -204,3 +208,36 @@ def test_a_colour_rule_on_a_refused_column_is_left_out():
     plugin = ColourRows(t, [{'column': 'margin', 'values': {}}, {'column': 'price', 'values': {}}])
 
     assert [c['column'] for c in plugin.colour_dict] == [1]
+
+
+@pytest.fixture
+def saved_states():
+    call_command('migrate', verbosity=0)
+    SavedState.objects.all().delete()
+    SavedState.objects.create(name='Customer A', table_id='7391')
+
+
+def search(t, value):
+    post = {'draw': '2', 'start': '0', 'length': '25', 'search[value]': value}
+    return json.loads(t.get_server_side_json(None, t.get_query(), post))
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_refused_columns_field_is_not_searched_through_search_fields(saved_states):
+    REFUSED.add('table_id')
+    t = ServerSideTable('states', model=SavedState)
+    t.search_fields = ['name', 'table_id']
+    t.add_columns('name', 'table_id')
+
+    assert search(t, 'Customer')['recordsFiltered'] == 1
+    assert search(t, '7391')['recordsFiltered'] == 0
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_field_a_permitted_column_shows_is_still_searched(saved_states):
+    REFUSED.add('Code/table_id')
+    t = ServerSideTable('states', model=SavedState)
+    t.search_fields = ['name', 'table_id']
+    t.add_columns('name', 'table_id', ColumnBase(column_name='Code/table_id', field='table_id'))
+
+    assert search(t, '7391')['recordsFiltered'] == 1

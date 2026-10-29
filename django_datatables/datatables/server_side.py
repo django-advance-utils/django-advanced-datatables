@@ -501,8 +501,12 @@ class ServerSideTable(DatatableTable):
         (list-field links, ``search=`` callables, overridden filters) participate too.
         """
         if self.search_fields:
+            permitted = self._column_paths(self.columns)
+            refused = self._column_paths(self.refused_columns.values())
             q = Q()
             for field in self.search_fields:
+                if field not in permitted and any(field == r or field.startswith(f'{r}__') for r in refused):
+                    continue
                 q |= Q(**{f'{field}__icontains': search_value})
         else:
             q = Q()
@@ -519,6 +523,14 @@ class ServerSideTable(DatatableTable):
             # which reads as "the search matched everything".
             logger.exception('Global search failed; returning unfiltered queryset')
             return queryset
+
+    @staticmethod
+    def _column_paths(columns):
+        paths = set()
+        for c in columns:
+            fields = c.field if isinstance(c.field, (list, tuple)) else [c.field]
+            paths.update(f for f in [*fields, *c._search_paths()] if isinstance(f, str))
+        return paths
 
     def _apply_column_searches(self, queryset, post_data):
         """Apply per-column search values sent by DataTables (delegates to each column)."""
