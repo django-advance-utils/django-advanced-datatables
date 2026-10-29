@@ -23,8 +23,9 @@ class DataTableWidget(SelectMultiple):
         table.table_options['pageLength'] = 400
         if 'filter' in self.attrs:
             table.filter = self.attrs['filter']
-        table.add_columns(*self.attrs['fields'],  LambdaColumn(width='30px', column_name='selected', title='',
-                                                               no_col_search=True, lambda_function=lambda a: '&nbsp;'))
+        table.add_columns(*self.attrs['fields'])
+        table.add_columns(LambdaColumn(width='30px', column_name='selected', title='', no_col_search=True,
+                                       lambda_function=lambda a: '&nbsp;'), check_permissions=False)
         table.table_classes.append('multi-select')
         table.ajax_data = False
         context['tick'] = self.tick

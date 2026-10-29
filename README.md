@@ -360,6 +360,36 @@ table.table_options['ajax_url'] = '/custom/ajax/url/'
 table.table_options['row_href'] = [render_replace(column='id', html='/detail/%1%/')]
 ```
 
+### Column permissions
+
+Name a function in `settings.DJANGO_ADVANCED_PERMISSION_CHECK` and `add_columns` asks it about every
+column:
+
+```python
+DJANGO_ADVANCED_PERMISSION_CHECK = 'myproject.permissions.check'
+
+def check(request, kind, name, obj=None):  # kind 'column', name the column_name, obj the table
+    return not (name == 'margin' and obj.table_id == 'orders')
+```
+
+A refused column is left out of the table altogether: it is not drawn, not queried, not exported
+and not offered in the column chooser, so its data never reaches the browser. `sort()`,
+`remove_columns()` and `add_js_filters()` skip a refused column rather than failing, whether it is named
+in full, by field or by the last part of its name; a js filter that sums a refused column is left out
+as well. Anything else that looks a refused column up, such as `table.column()`, raises
+`RefusedColumnError`, a `DatatableError`. The refused columns are in `table.refused_columns`, keyed by
+name. Refusing the id column leaves rows that cannot be refreshed or linked to, and logs a warning.
+Name columns rather than give positions in `table_options` (`order`, `column_id`): a refused column
+moves every column after it, and only positions worked out from names are moved with them.
+
+`request` is `None` for a table built without a view, such as one a project builds for tree-grid rows
+or an export, so a check should allow for that. With the setting unset every column is added. A table
+built with `cache_data` keeps a separate copy for each set of refused columns. The library's own
+tables (the column chooser, the multi-select widget's tick column, `OrderedDatatable`'s handle columns)
+pass `check_permissions=False` to `add_columns`, which a project can do too.
+ajax-advanced-helpers and django-advanced-modals read the same setting, each
+with a `kind` of its own.
+
 ## Demo Application
 
 A Docker-based demo is included with sample data and 15+ examples covering filters, plugins, editing, rendering, and more.
