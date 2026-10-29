@@ -69,7 +69,7 @@ class ColumnForm(CrispyForm):
         b64_key = base64.b64encode(table.session_key().encode('utf8')).decode("utf-8").rstrip('=')
 
         modal_table = OrderedDatatable(b64_key, order_field='order')
-        modal_table.add_columns('enable', '.col', 'column', '.order')
+        modal_table.add_columns('enable', '.col', 'column', '.order', check_permissions=False)
         col_order = table.session_column_order()
 
         modal_table.table_data = []

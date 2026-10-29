@@ -33,6 +33,7 @@ class OrderedDatatable(DatatableTable):
         self.add_columns(
             '._index',
             '.pk', ('_handle',  {'title': '', 'column_defs': {'width': '30px', 'className': 'button-cell'}}),
+            check_permissions=False,
         )
 
     def get_query(self, **kwargs):

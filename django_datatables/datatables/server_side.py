@@ -258,7 +258,7 @@ class ServerSideTable(DatatableTable):
     # Column search-box visibility
     # ------------------------------------------------------------------
 
-    def add_columns(self, *columns):
+    def add_columns(self, *columns, check_permissions=True):
         """Add columns and auto-hide search boxes for non-searchable columns.
 
         A search box is suppressed automatically when the column cannot be
@@ -273,7 +273,7 @@ class ServerSideTable(DatatableTable):
 
             table_options = {'no_col_search': True}
         """
-        super().add_columns(*columns)
+        super().add_columns(*columns, check_permissions=check_permissions)
         self._auto_mark_unsearchable_columns()
 
     def _is_col_searchable(self, col):

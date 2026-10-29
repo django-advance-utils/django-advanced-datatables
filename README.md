@@ -379,11 +379,14 @@ in full, by field or by the last part of its name; a js filter that sums a refus
 as well. Anything else that looks a refused column up, such as `table.column()`, raises
 `RefusedColumnError`, a `DatatableError`. The refused columns are in `table.refused_columns`, keyed by
 name. Refusing the id column leaves rows that cannot be refreshed or linked to, and logs a warning.
+Name columns rather than give positions in `table_options` (`order`, `column_id`): a refused column
+moves every column after it, and only positions worked out from names are moved with them.
 
 `request` is `None` for a table built without a view, such as one a project builds for tree-grid rows
 or an export, so a check should allow for that. With the setting unset every column is added. A table
-built with `cache_data` caches one copy for everyone, so do not combine it with columns that differ by
-user.
+built with `cache_data` keeps a separate copy for each set of refused columns. The library's own
+tables (the column chooser, the multi-select widget's tick column, `OrderedDatatable`'s handle columns)
+pass `check_permissions=False` to `add_columns`, which a project can do too.
 ajax-advanced-helpers and django-advanced-modals read the same setting, each
 with a `kind` of its own.
 

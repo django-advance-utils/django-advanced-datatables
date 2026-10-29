@@ -19,6 +19,8 @@ from django.test import override_settings  # noqa: E402
 from django_datatables.columns import ColumnBase  # noqa: E402
 from django_datatables.datatables import DatatableError, DatatableTable, RefusedColumnError  # noqa: E402
 from django_datatables.filters import DatatableFilter  # noqa: E402
+from django_datatables.plugins.colour_rows import ColourRows  # noqa: E402
+from django_datatables.reorder_datatable import OrderedDatatable  # noqa: E402
 
 CHECK = f'{__name__}.check'
 ASKED = []
@@ -161,3 +163,44 @@ def test_a_refused_id_column_is_warned_about(caplog):
 def test_a_check_that_cannot_be_imported_names_the_setting():
     with pytest.raises(ImproperlyConfigured, match='DJANGO_ADVANCED_PERMISSION_CHECK'):
         table()
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_cached_table_is_cached_apart_for_each_set_of_refused_columns():
+    everything = table()
+    REFUSED.add('margin')
+    without_margin = table()
+
+    assert everything.cache_key == 'orders'
+    assert without_margin.cache_key == 'orders:refused:margin'
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_columns_added_without_checking_permissions_are_not_asked_about():
+    REFUSED.add('margin')
+    t = DatatableTable('orders')
+
+    t.add_columns(ColumnBase(column_name='margin'), check_permissions=False)
+
+    assert names(t) == ['margin']
+    assert ASKED == []
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_an_ordered_tables_own_columns_are_not_asked_about():
+    REFUSED.update({'pk', '_handle', '_index'})
+
+    t = OrderedDatatable('orders', order_field='order')
+
+    assert len(t.columns) == 3
+    assert ASKED == []
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_colour_rule_on_a_refused_column_is_left_out():
+    REFUSED.add('margin')
+    t = table()
+
+    plugin = ColourRows(t, [{'column': 'margin', 'values': {}}, {'column': 'price', 'values': {}}])
+
+    assert [c['column'] for c in plugin.colour_dict] == [1]

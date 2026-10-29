@@ -84,9 +84,10 @@ class DatatableTable:
 
     @property
     def cache_key(self):
-        if self.cache_prefix:
-            return f'{self.cache_prefix}:{self.table_id}'
-        return self.table_id
+        key = f'{self.cache_prefix}:{self.table_id}' if self.cache_prefix else self.table_id
+        if self.refused_columns:
+            key += ':refused:' + ','.join(sorted(self.refused_columns))
+        return key
 
     def moment_formats_js(self):
         if not self.date_formats:
@@ -217,13 +218,13 @@ class DatatableTable:
 
     def column_refused(self, column_name, by_field=False):
         return (self.match_column(self.columns, column_name, by_field) is None
-                and self.match_column(list(self.refused_columns.values()), column_name, by_field) is not None)
+                and self.match_column(self.refused_columns.values(), column_name, by_field) is not None)
 
     def find_column(self, column_name, by_field=False):
         found = self.match_column(self.columns, column_name, by_field)
         if found:
             return found
-        if self.match_column(list(self.refused_columns.values()), column_name, by_field):
+        if self.match_column(self.refused_columns.values(), column_name, by_field):
             raise RefusedColumnError(f'Column {column_name} was refused by the permission check')
         raise DatatableError('Unable to find column ' + column_name)
 
@@ -289,7 +290,7 @@ class DatatableTable:
                 return False
         return True
 
-    def add_columns(self, *columns):
+    def add_columns(self, *columns, check_permissions=True):
         order = self.session_column_order()
         hidden_order = -1000
         for c in columns:
@@ -299,7 +300,8 @@ class DatatableTable:
                     nc.order = order.get(nc.column_name, hidden_order)
                     hidden_order += 1
             self.columns += [nc for nc in new_columns
-                             if (nc.enabled and self.column_permitted(nc) and self.show_column(nc))]
+                             if (nc.enabled and (not check_permissions or self.column_permitted(nc))
+                                 and self.show_column(nc))]
         if order:
             def sort_order(column):
                 return getattr(column, 'order', 9999)
