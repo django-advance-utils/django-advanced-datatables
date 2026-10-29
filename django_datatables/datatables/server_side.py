@@ -2,6 +2,7 @@ import json
 import logging
 from inspect import isclass
 
+from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Q
 
 from django_datatables.datatables.datatable_error import DatatableError
@@ -501,11 +502,12 @@ class ServerSideTable(DatatableTable):
         (list-field links, ``search=`` callables, overridden filters) participate too.
         """
         if self.search_fields:
-            permitted = self._column_paths(self.columns)
-            refused = self._column_paths(self.refused_columns.values())
+            permitted = {self._resolve_path(p) for p in self._column_paths(self.columns)}
+            refused = {self._resolve_path(p) for p in self._column_paths(self.refused_columns.values())}
             q = Q()
             for field in self.search_fields:
-                if field not in permitted and any(field == r or field.startswith(f'{r}__') for r in refused):
+                path = self._resolve_path(field)
+                if path not in permitted and any(path[:len(r)] == r for r in refused):
                     continue
                 q |= Q(**{f'{field}__icontains': search_value})
         else:
@@ -531,6 +533,24 @@ class ServerSideTable(DatatableTable):
             fields = c.field if isinstance(c.field, (list, tuple)) else [c.field]
             paths.update(f for f in [*fields, *c._search_paths()] if isinstance(f, str))
         return paths
+
+    def _resolve_path(self, path):
+        model, resolved = self.model, []
+        parts = path.split('__')
+        for n, part in enumerate(parts):
+            if model is None:
+                return (*resolved, *parts[n:])
+            try:
+                field = model._meta.pk if part == 'pk' else model._meta.get_field(part)
+            except FieldDoesNotExist:
+                return (*resolved, *parts[n:])
+            resolved.append(field)
+            if field.is_relation and part != field.name and part == getattr(field, 'attname', None):
+                resolved.append(field.target_field)
+                model = None
+            else:
+                model = field.related_model if field.is_relation else None
+        return tuple(resolved)
 
     def _apply_column_searches(self, queryset, post_data):
         """Apply per-column search values sent by DataTables (delegates to each column)."""

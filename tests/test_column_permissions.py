@@ -16,6 +16,7 @@ if not settings.configured:
 import json  # noqa: E402
 
 from django.core.exceptions import ImproperlyConfigured  # noqa: E402
+from django.contrib.auth.models import User  # noqa: E402
 from django.core.management import call_command  # noqa: E402
 from django.test import override_settings  # noqa: E402
 
@@ -214,6 +215,7 @@ def test_a_colour_rule_on_a_refused_column_is_left_out():
 def saved_states():
     call_command('migrate', verbosity=0)
     SavedState.objects.all().delete()
+    User.objects.all().delete()
     SavedState.objects.create(name='Customer A', table_id='7391')
 
 
@@ -241,3 +243,26 @@ def test_a_field_a_permitted_column_shows_is_still_searched(saved_states):
     t.add_columns('name', 'table_id', ColumnBase(column_name='Code/table_id', field='table_id'))
 
     assert search(t, '7391')['recordsFiltered'] == 1
+
+
+@pytest.mark.parametrize('search_field', ['user_id', 'user__pk', 'user__id'])
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_refused_field_is_not_searched_through_another_path_to_it(saved_states, search_field):
+    SavedState.objects.update(user=User.objects.create(id=7391, username='someone'))
+    REFUSED.add('user_id')
+    t = ServerSideTable('states', model=SavedState)
+    t.search_fields = ['name', search_field]
+    t.add_columns('name', ColumnBase(column_name='user_id', field='user_id'))
+
+    assert search(t, '7391')['recordsFiltered'] == 0
+
+
+@override_settings(DJANGO_ADVANCED_PERMISSION_CHECK=CHECK)
+def test_a_field_reached_through_a_refused_relation_is_not_searched(saved_states):
+    SavedState.objects.update(user=User.objects.create(username='someone'))
+    REFUSED.add('user')
+    t = ServerSideTable('states', model=SavedState)
+    t.search_fields = ['name', 'user__username']
+    t.add_columns('name', ColumnBase(column_name='user', field='user'))
+
+    assert search(t, 'someone')['recordsFiltered'] == 0
