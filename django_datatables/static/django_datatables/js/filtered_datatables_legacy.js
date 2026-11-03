@@ -172,13 +172,18 @@ if (typeof django_datatables === 'undefined') {
         return;
       }
       var api = table.table.api();
+      var changed = false;
       Object.keys(command.rows).forEach(function (row_no) {
         var row = api.row('#' + row_no);
         if (row.any()) {
           row.data(command.rows[row_no]).invalidate();
+          changed = true;
         }
       });
-      api.draw(false);
+      var serverSide = table.initsetup && table.initsetup.tableOptions && table.initsetup.tableOptions.serverSide;
+      if (changed && !serverSide) {
+        api.draw(false);
+      }
     };
 
     ajax_helpers.command_functions.send_column = function (command) {

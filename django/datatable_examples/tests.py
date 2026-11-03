@@ -1442,6 +1442,26 @@ class TestRefreshRows(TestCase):
         self.assertEqual(list(command['rows']), [self.row_no('Bob')])
         self.assertEqual(self.table().refresh_rows_command(self.request, None)['rows'], {})
 
+    def test_a_row_id_without_its_prefix_or_too_large_is_left_out(self):
+        pk = Person.objects.get(first_name='Alice').pk
+        command = self.table().refresh_rows_command(self.request, [f'x{pk}', 'i99999999999999999999', self.row_no('Bob')])
+        self.assertEqual(list(command['rows']), [self.row_no('Bob')])
+
+    def test_max_records_does_not_drop_rows_asked_for(self):
+        table = self.table()
+        table.max_records = 1
+        command = table.refresh_rows_command(self.request, [self.row_no('Alice'), self.row_no('Bob'), self.row_no('Carol')])
+        self.assertEqual(len(command['rows']), 3)
+        self.assertEqual(table.max_records, 1)
+
+    def test_the_tables_filter_is_given_back(self):
+        table = self.table()
+        table.filter = {'first_name__in': ['Alice', 'Bob']}
+        table.refresh_rows_command(self.request, [self.row_no('Alice')])
+        self.assertEqual(table.filter, {'first_name__in': ['Alice', 'Bob']})
+        command = table.refresh_row_command(self.request, self.row_no('Bob'))
+        self.assertEqual(command['data'][1], 'Bob')
+
     def test_a_table_with_no_id_column_answers_no_rows(self):
         table = DatatableTable('names', model=Person)
         table.add_columns('first_name')

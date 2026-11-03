@@ -466,17 +466,25 @@ class DatatableTable:
     def refresh_row(self, request, row_id):
         return JsonResponse([self.refresh_row_command(request, row_id)], safe=False)
 
+    MAX_ROW_ID = 2 ** 63 - 1
+
     def refresh_rows_command(self, request, row_ids):
         ids = [int(row_id[1:]) for row_id in row_ids or ()
-               if isinstance(row_id, str) and row_id[1:].isascii() and row_id[1:].isdecimal()]
+               if isinstance(row_id, str) and row_id.startswith('i')
+               and row_id[1:].isascii() and row_id[1:].isdecimal() and int(row_id[1:]) <= self.MAX_ROW_ID]
         rows = {}
         id_column = self.setup_column_id()
         if id_column is not None and ids:
-            current = self.filter if isinstance(self.filter, models.Q) else models.Q(**self.filter)
+            table_filter, max_records = self.filter, self.max_records
+            current = table_filter if isinstance(table_filter, models.Q) else models.Q(**table_filter)
             self.filter = current & models.Q(**{f'{id_column.field}__in': ids})
-            column_id = self.table_options['column_id']
-            for row in self.get_table_array(request, self.get_query()):
-                rows[f'i{row[column_id]}'] = row
+            self.max_records = None
+            try:
+                column_id = self.table_options['column_id']
+                for row in self.get_table_array(request, self.get_query()):
+                    rows[f'i{row[column_id]}'] = row
+            finally:
+                self.filter, self.max_records = table_filter, max_records
         return {'function': 'refresh_rows', 'table_id': self.table_id, 'rows': rows}
 
     def refresh_rows(self, request, row_ids):
