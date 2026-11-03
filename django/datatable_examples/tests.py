@@ -1399,3 +1399,96 @@ class TestModelOrdering(TestCase):
         table.initial_values = ['name']
         with mock.patch.object(Company._meta, 'ordering', ['order']):
             self.assertEqual([r['name'] for r in table.get_query()].count('Duplicate'), 1)
+
+
+
+class TestRefreshRows(TestCase):
+
+    def setUp(self):
+        make_data()
+        self.request = RequestFactory().get('/')
+
+    def table(self):
+        table = DatatableTable('people', model=Person)
+        table.add_columns('id', 'first_name')
+        return table
+
+    def row_no(self, first_name):
+        return f'i{Person.objects.get(first_name=first_name).pk}'
+
+    def test_each_row_comes_back_keyed_as_the_page_keys_it(self):
+        command = self.table().refresh_rows_command(self.request, [self.row_no('Alice'), self.row_no('Carol')])
+        self.assertEqual(command['function'], 'refresh_rows')
+        self.assertEqual(command['table_id'], 'people')
+        self.assertEqual({row_no: row[1] for row_no, row in command['rows'].items()},
+                         {self.row_no('Alice'): 'Alice', self.row_no('Carol'): 'Carol'})
+
+    def test_the_tables_own_filter_still_applies_dict_or_q(self):
+        for table_filter in ({'first_name__in': ['Alice', 'Bob']}, Q(first_name='Alice') | Q(first_name='Bob')):
+            with self.subTest(table_filter=table_filter):
+                table = self.table()
+                table.filter = table_filter
+                command = table.refresh_rows_command(self.request, [self.row_no('Alice'), self.row_no('Carol')])
+                self.assertEqual(list(command['rows']), [self.row_no('Alice')])
+
+    def test_a_filter_on_the_id_is_not_replaced(self):
+        table = self.table()
+        table.filter = {'id__in': [Person.objects.get(first_name='Alice').pk]}
+        command = table.refresh_rows_command(self.request, [self.row_no('Alice'), self.row_no('Bob')])
+        self.assertEqual(list(command['rows']), [self.row_no('Alice')])
+
+    def test_a_row_gone_or_a_row_no_that_is_not_one_is_left_out(self):
+        command = self.table().refresh_rows_command(self.request, ['i999999', 'i', 'x', 'i\u00b2', None, self.row_no('Bob')])
+        self.assertEqual(list(command['rows']), [self.row_no('Bob')])
+        self.assertEqual(self.table().refresh_rows_command(self.request, None)['rows'], {})
+
+    def test_a_row_id_without_its_prefix_or_too_large_is_left_out(self):
+        pk = Person.objects.get(first_name='Alice').pk
+        command = self.table().refresh_rows_command(self.request, [f'x{pk}', 'i99999999999999999999', self.row_no('Bob')])
+        self.assertEqual(list(command['rows']), [self.row_no('Bob')])
+
+    def test_a_row_id_too_long_to_read_is_left_out(self):
+        command = self.table().refresh_rows_command(self.request, ['i' + '9' * 5000, self.row_no('Bob')])
+        self.assertEqual(list(command['rows']), [self.row_no('Bob')])
+
+    def test_many_ids_are_read_in_batches(self):
+        table = self.table()
+        table.REFRESH_BATCH_SIZE = 2
+        row_nos = [self.row_no(name) for name in ('Alice', 'Bob', 'Carol', 'Dave')]
+        command = table.refresh_rows_command(self.request, row_nos + row_nos)
+        self.assertEqual(sorted(command['rows']), sorted(row_nos))
+
+    def test_max_records_does_not_drop_rows_asked_for(self):
+        table = self.table()
+        table.max_records = 1
+        command = table.refresh_rows_command(self.request, [self.row_no('Alice'), self.row_no('Bob'), self.row_no('Carol')])
+        self.assertEqual(len(command['rows']), 3)
+        self.assertEqual(table.max_records, 1)
+
+    def test_the_tables_filter_is_given_back(self):
+        table = self.table()
+        table.filter = {'first_name__in': ['Alice', 'Bob']}
+        table.refresh_rows_command(self.request, [self.row_no('Alice')])
+        self.assertEqual(table.filter, {'first_name__in': ['Alice', 'Bob']})
+        command = table.refresh_row_command(self.request, self.row_no('Bob'))
+        self.assertEqual(command['data'][1], 'Bob')
+
+    def test_a_table_with_no_id_column_answers_no_rows(self):
+        table = DatatableTable('names', model=Person)
+        table.add_columns('first_name')
+        self.assertEqual(table.refresh_rows_command(self.request, [self.row_no('Alice')])['rows'], {})
+
+    def test_the_view_answers_the_refresh_many_row_command(self):
+        class PeopleView(AjaxHelpers, DatatableView):
+            model = Person
+
+            def setup_peopleview(self, table):
+                table.add_columns('id', 'first_name')
+
+        view = PeopleView()
+        view.request = self.request
+        view.add_tables()
+        commands = json.loads(view.row_refresh_many(table_id='peopleview', row_nos=[self.row_no('Dave')]).content)
+        self.assertEqual(commands[0]['rows'][self.row_no('Dave')][1], 'Dave')
+        self.assertEqual(json.loads(view.row_refresh_many(table_id='nope', row_nos=[self.row_no('Dave')]).content),
+                         [{'function': 'null'}])

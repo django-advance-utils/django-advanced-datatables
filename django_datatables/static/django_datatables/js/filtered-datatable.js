@@ -161,6 +161,30 @@ if (typeof django_datatables === 'undefined') {
             }
         }
 
+        ajax_helpers.command_functions.refresh_rows = function(command){
+            if (command.rows === undefined){
+                ajax_helpers.post_json({data: {row: 'refresh_many', row_nos: command.row_nos, table_id: command.table_id}});
+                return;
+            }
+            var table = DataTables[command.table_id];
+            if (table === undefined) {
+                return;
+            }
+            var api = table.table.api();
+            var changed = false;
+            Object.keys(command.rows).forEach(function (row_no) {
+                var row = api.row('#' + row_no);
+                if (row.any()) {
+                    row.data(command.rows[row_no]).invalidate();
+                    changed = true;
+                }
+            });
+            var serverSide = table.initsetup && table.initsetup.tableOptions && table.initsetup.tableOptions.serverSide;
+            if (changed && !serverSide) {
+                api.draw(false);
+            }
+        }
+
         ajax_helpers.command_functions.send_column = function (command) {
             if (command.data === undefined) {
                 command.data = {};

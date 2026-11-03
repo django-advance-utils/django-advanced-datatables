@@ -41,6 +41,14 @@ class DatatableView(TemplateView):
         self.setup_table(self.tables[table_id])
         return self.tables[table_id].refresh_row(self.request, kwargs['row_no'])
 
+    def row_refresh_many(self, **kwargs):
+        table_id = kwargs.get('table_id') or next(iter(self.tables), None)
+        table = self.tables.get(table_id)
+        if table is None:
+            return self.command_response('null')
+        self.setup_tables(table_id)
+        return table.refresh_rows(self.request, kwargs.get('row_nos'))
+
     def view_filter(self, query, table):
         if hasattr(table.model, 'query_filter'):
             return table.model.query_filter(query, self.request, table=table)
