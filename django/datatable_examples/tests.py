@@ -1447,6 +1447,17 @@ class TestRefreshRows(TestCase):
         command = self.table().refresh_rows_command(self.request, [f'x{pk}', 'i99999999999999999999', self.row_no('Bob')])
         self.assertEqual(list(command['rows']), [self.row_no('Bob')])
 
+    def test_a_row_id_too_long_to_read_is_left_out(self):
+        command = self.table().refresh_rows_command(self.request, ['i' + '9' * 5000, self.row_no('Bob')])
+        self.assertEqual(list(command['rows']), [self.row_no('Bob')])
+
+    def test_many_ids_are_read_in_batches(self):
+        table = self.table()
+        table.REFRESH_BATCH_SIZE = 2
+        row_nos = [self.row_no(name) for name in ('Alice', 'Bob', 'Carol', 'Dave')]
+        command = table.refresh_rows_command(self.request, row_nos + row_nos)
+        self.assertEqual(sorted(command['rows']), sorted(row_nos))
+
     def test_max_records_does_not_drop_rows_asked_for(self):
         table = self.table()
         table.max_records = 1

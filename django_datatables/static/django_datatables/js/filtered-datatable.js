@@ -179,7 +179,8 @@ if (typeof django_datatables === 'undefined') {
                     changed = true;
                 }
             });
-            if (changed && !table.initsetup.tableOptions.serverSide) {
+            var serverSide = table.initsetup && table.initsetup.tableOptions && table.initsetup.tableOptions.serverSide;
+            if (changed && !serverSide) {
                 api.draw(false);
             }
         }

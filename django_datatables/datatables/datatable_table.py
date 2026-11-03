@@ -12,6 +12,7 @@ from django.utils.safestring import mark_safe
 from django_menus.menu import MenuItem, HtmlMenu
 
 from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY
+from django_datatables.helpers import convert_to_q
 from django_datatables.datatables.column_initialiser import ColumnInitialisor
 from django_datatables.datatables.datatable_error import DatatableError, RefusedColumnError
 from django_datatables.filters import DatatableFilter
@@ -467,22 +468,32 @@ class DatatableTable:
         return JsonResponse([self.refresh_row_command(request, row_id)], safe=False)
 
     MAX_ROW_ID = 2 ** 63 - 1
+    REFRESH_BATCH_SIZE = 500
+
+    @classmethod
+    def parse_row_id(cls, row_id):
+        if not isinstance(row_id, str) or not row_id.startswith('i'):
+            return None
+        digits = row_id[1:]
+        if not digits or len(digits) > 19 or not (digits.isascii() and digits.isdecimal()):
+            return None
+        value = int(digits)
+        return value if value <= cls.MAX_ROW_ID else None
 
     def refresh_rows_command(self, request, row_ids):
-        ids = [int(row_id[1:]) for row_id in row_ids or ()
-               if isinstance(row_id, str) and row_id.startswith('i')
-               and row_id[1:].isascii() and row_id[1:].isdecimal() and int(row_id[1:]) <= self.MAX_ROW_ID]
+        ids = list(dict.fromkeys(i for i in map(self.parse_row_id, row_ids or ()) if i is not None))
         rows = {}
         id_column = self.setup_column_id()
         if id_column is not None and ids:
             table_filter, max_records = self.filter, self.max_records
-            current = table_filter if isinstance(table_filter, models.Q) else models.Q(**table_filter)
-            self.filter = current & models.Q(**{f'{id_column.field}__in': ids})
             self.max_records = None
             try:
                 column_id = self.table_options['column_id']
-                for row in self.get_table_array(request, self.get_query()):
-                    rows[f'i{row[column_id]}'] = row
+                for start in range(0, len(ids), self.REFRESH_BATCH_SIZE):
+                    batch = ids[start:start + self.REFRESH_BATCH_SIZE]
+                    self.filter = convert_to_q(table_filter) & models.Q(**{f'{id_column.field}__in': batch})
+                    for row in self.get_table_array(request, self.get_query()):
+                        rows[f'i{row[column_id]}'] = row
             finally:
                 self.filter, self.max_records = table_filter, max_records
         return {'function': 'refresh_rows', 'table_id': self.table_id, 'rows': rows}
