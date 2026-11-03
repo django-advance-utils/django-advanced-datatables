@@ -279,6 +279,21 @@ class MyView(DatatableView):
         return table.refresh_row(self.request, kwargs['row_no'])
 ```
 
+### Refreshing Many Rows
+
+`table.refresh_rows(request, row_ids)` answers with one `refresh_rows` command carrying every row
+asked for, read in one query and keyed by row id (`'i<id>'`); the page repaints them and redraws
+once. A row gone, or filtered out of the table since, is left out. The table's own filter still
+applies, whether a dict or a `Q`.
+
+```python
+return table.refresh_rows(self.request, ['i12', 'i15', 'i19'])
+```
+
+From the page, `{function: 'refresh_rows', table_id: 'people', row_nos: ['i12', 'i15']}` with no
+`rows` asks the view for them: `DatatableView.row_refresh_many` answers it, given
+`ajax_commands = ['row']`.
+
 ### Data Export
 
 ```python
