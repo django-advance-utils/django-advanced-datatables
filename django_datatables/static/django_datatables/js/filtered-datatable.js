@@ -535,7 +535,15 @@ if (typeof django_datatables === 'undefined') {
             this.html = function () {
                 var htmldata = ''
                 for (var k of this.filter_calcs.sort_keys()) {
-                    htmldata += this.options.htmlcheckbox.replace(/%1/g, k).replace(/%6/g, encodeURI(k))
+                    // The key goes into data-value through the page's HTML parser, which decodes entities: a
+                    // cell escaped for the page ('Paint &amp; Finish') came back off its checkbox as
+                    // 'Paint & Finish' and matched none of its rows. encodeURI already encodes <, >, " and %,
+                    // so escaping the & hands the key back as written. One pass fills both placeholders, so
+                    // neither is looked for in a value written in place of the other.
+                    var key = encodeURI(k).replace(/&/g, '&amp;')
+                    htmldata += this.options.htmlcheckbox.replace(/%([16])/g, function (placeholder, number) {
+                        return number === '1' ? k : key
+                    })
                 }
                 var context = $('#' + this.html_id)
                 $('.filter-content', context).html(htmldata)

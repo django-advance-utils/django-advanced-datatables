@@ -540,7 +540,11 @@ if (typeof django_datatables === 'undefined') {
         try {
           for (_iterator.s(); !(_step = _iterator.n()).done;) {
             var k = _step.value;
-            htmldata += this.options.htmlcheckbox.replace(/%1/g, k).replace(/%6/g, encodeURI(k));
+            // As filtered-datatable.js: the & escaped so the HTML parser hands the key back as written.
+            var key = encodeURI(k).replace(/&/g, '&amp;');
+            htmldata += this.options.htmlcheckbox.replace(/%([16])/g, function (placeholder, number) {
+              return number === '1' ? k : key;
+            });
           }
         } catch (err) {
           _iterator.e(err);
