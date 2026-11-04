@@ -388,8 +388,10 @@ class StatusColumn(DatatableColumn):
 
 A column that returns markup as a plain string shows its tags as text: harmless, and easy to see. A column
 whose cells the page reads as data rather than shows (a lookup's key, a url for a script) opts out with the
-class attribute `page_escape = False`, or the keyword `page_escape=False`. A single table follows its own
-`escape_cells` (`True` or `False`) when it has one, whatever the setting.
+class attribute `page_escape = False`, or the keyword `page_escape=False`. A column that builds markup of its
+own round text it reads can override `page_value(value)` to escape the text alone on its way to the page, as
+`TextFieldColumn` does to keep its line breaks. A single table follows its own `escape_cells` (`True` or
+`False`) when it has one, whatever the setting.
 
 Only the page is escaped. `get_table_array` still gives the Excel download, the clipboard and a spreadsheet
 the text as it was typed; the page writers use `get_page_array`. It is off unless the setting turns it on.
