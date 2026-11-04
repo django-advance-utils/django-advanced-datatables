@@ -34,7 +34,7 @@
                 this.filter_data = [];
                 var selected = $("#" + this.html_id + " select").select2('data');
                 for (var i = 0; i < selected.length; i++) {
-                    this.filter_data.push(selected[i].text)
+                    this.filter_data.push(decodeURI(selected[i].id))
                 }
                 if (refresh){
                     this.pTable.table.api().draw();
@@ -82,16 +82,16 @@
             this.html = function () {
                 // The option list is built from server facet counts; wait for them.
                 if (!this.facets_loaded) return
-                var optionhtml = '<option value="%6">%1</option>'
-                var htmldata = '';
+                // Each option made with its label as text: the labels are the server's values as stored, and
+                // a name typed with a tag ran as soon as the options were written as html.
+                var context = $('#' + this.html_id)
+                var select = $('.filter-content', context).empty()
                 var sorted_keys = this.filter_calcs.sort_keys()
                 var k = sorted_keys.next()
                 while (!k.done){
-                    htmldata += optionhtml.replace(/%1/g, k.value).replace(/%6/g, encodeURI(k.value))
+                    select.append($('<option></option>').attr('value', encodeURI(k.value)).text(k.value))
                     k = sorted_keys.next()
                 }
-                var context = $('#' + this.html_id)
-                $('.filter-content', context).html(htmldata);
                 this.restore_state()
                 $("select", context).select2({
                     templateResult: this.this_fn_parameter('format_template')
@@ -105,9 +105,13 @@
                 $("select", context).val('').trigger('change')
             }
             this.format_template = function (state) {
-                var dropdown_item = '<span>%1<span class="float-right mx-1 small badge badge-pill %3">%2</span></span>';
                 if (state.loading) return;
-                return $(dropdown_item.replace('%1', state.text).replace('%2', this.filter_calcs.badge_string(state.text)).replace('%3', this.filter_calcs.badge_colour(state.text)[0]));
+                // As the client select2: counted by the option's value, and its label written as text.
+                var key = state.id === undefined ? state.text : decodeURI(state.id)
+                var badge = $('<span class="float-right mx-1 small badge badge-pill"></span>')
+                    .addClass(this.filter_calcs.badge_colour(key)[0])
+                    .text(this.filter_calcs.badge_string(key))
+                return $('<span></span>').text(state.text).append(badge)
             }
         }
 

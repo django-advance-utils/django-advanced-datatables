@@ -284,6 +284,13 @@ if (typeof django_datatables === 'undefined') {
             numberWithCommas: function(x, decimal_places=0) {
                 return x.toFixed(decimal_places).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
             },
+
+            // Text, escaped to go into markup as text: for a label the server sends as it is stored.
+            escape_html: function (text) {
+                return String(text).replace(/[&<>"']/g, function (character) {
+                    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;'}[character]
+                })
+            },
         }
 
         var columnsearch = function (settings, data, dataIndex, row_data) {
@@ -544,6 +551,7 @@ if (typeof django_datatables === 'undefined') {
 
             this.html = function () {
                 var htmldata = ''
+                var filter = this
                 for (var k of this.filter_calcs.sort_keys()) {
                     // The key goes into data-value through the page's HTML parser, which decodes entities: a
                     // cell escaped for the page ('Paint &amp; Finish') came back off its checkbox as
@@ -552,7 +560,7 @@ if (typeof django_datatables === 'undefined') {
                     // neither is looked for in a value written in place of the other.
                     var key = encodeURI(k).replace(/&/g, '&amp;')
                     htmldata += this.options.htmlcheckbox.replace(/%([16])/g, function (placeholder, number) {
-                        return number === '1' ? k : key
+                        return number === '1' ? filter.label(k) : key
                     })
                 }
                 var context = $('#' + this.html_id)
@@ -562,6 +570,12 @@ if (typeof django_datatables === 'undefined') {
                 $(".none-check", context).click(this.this_fn('checkall', false))
                 this.restore_state()
                 this.buildfilter(false)
+            }
+
+            // A key as its checkbox is labelled. Here a key is a cell, which reaches the page escaped when the
+            // table escapes its cells, so it is written as it is; a server's keys are its stored values.
+            this.label = function (key) {
+                return key
             }
 
             this.checkall = function (checked) {
@@ -602,6 +616,10 @@ if (typeof django_datatables === 'undefined') {
             this.filter = function (data) {
                 return true
             }
+
+            // The keys are the server's values as stored, not cells, so each is written as text: a name
+            // typed with a tag ran when the filter was drawn.
+            this.label = utilities.escape_html
 
             var pivot_html = this.html
             this.html = function () {
