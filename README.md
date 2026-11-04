@@ -393,6 +393,11 @@ own round text it reads can override `page_value(value)` to escape the text alon
 `TextFieldColumn` does to keep its line breaks. A single table follows its own `escape_cells` (`True` or
 `False`) when it has one, whatever the setting.
 
+A lookup goes the same way. The `[key, label]` pairs a column hands the page for a `ReplaceLookup` render (a
+`ManyToManyColumn`'s names, a `BooleanColumn`'s `replace`) have their labels escaped unless marked safe, and
+their keys escaped as the cells are, so a lookup keyed by stored text still finds its cells. A `BooleanColumn`'s
+`replace` is html by definition and is marked safe for you.
+
 Only the page is escaped. `get_table_array` still gives the Excel download, the clipboard and a spreadsheet
 the text as it was typed; the page writers use `get_page_array`. It is off unless the setting turns it on.
 

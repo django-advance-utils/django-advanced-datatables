@@ -1737,3 +1737,59 @@ class TestARowEditSavesWhatWasTyped(EscapingTableTestCase):
         self.company.refresh_from_db()
         self.assertEqual(typed, self.company.name)
         self.assertEqual('O&#x27;Brien &amp; Co &lt;b&gt;', self.row_cells(table, command['data'])['name'])
+
+
+class LookupTestCase(EscapingTableTestCase):
+    def lookup(self, table, column_name):
+        """The lookup the page is handed for a column, as a list of [key, label, ...] pairs."""
+        options = json.loads(table.col_def_str())['colOptions']
+        return options[table.all_names().index(column_name)]['lookup']
+
+    @staticmethod
+    def keyed_by_name(**kwargs):
+        """A column whose cell is the company's name, and whose lookup is keyed by the name as stored."""
+        return DatatableColumn(column_name='stage', field='name',
+                               render=[{'function': 'ReplaceLookup', 'html': '<b>%1%</b>', 'var': '%1%'}],
+                               lookup=[(MARKUP, 'Painting')], **kwargs)
+
+
+@override_settings(DATATABLES_ESCAPE_CELLS=True)
+class TestALookupGoesWithItsCells(LookupTestCase):
+    """A lookup's labels are written into markup by the page's ReplaceLookup, so they are escaped with the cells;
+    its keys are matched against the cells, so they are escaped as the cells are."""
+
+    def test_a_many_to_many_columns_names(self):
+        tag = Tags.objects.create(tag=MARKUP)
+        tag.company.add(self.company)
+        table = self.table(ManyToManyColumn(column_name='CompanyTags', field='tags__tag', model=Company, html='%1%'))
+
+        self.assertIn([tag.pk, ESCAPED], self.lookup(table, 'CompanyTags'))
+        column, _ = table.find_column('CompanyTags')
+        self.assertIn((tag.pk, MARKUP), column.options['lookup'])  # what the server's own filters read
+
+    def test_a_lookup_keyed_by_stored_text_still_finds_its_cell(self):
+        table = self.table(self.keyed_by_name())
+
+        (row,) = table.get_page_array(self.request, table.get_query())
+
+        self.assertEqual([[ESCAPED, 'Painting']], self.lookup(table, 'stage'))
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['stage'])
+
+    def test_a_label_marked_safe_and_a_tick(self):
+        table = self.table(
+            TickColumn(column_name='dissolved', field='dissolved'),
+            DatatableColumn(column_name='labelled', field='id', lookup=[(1, format_html('{}', 'Doors & Frames'))]),
+        )
+
+        self.assertIn('<i class="text-success fas fa-check-circle">', self.lookup(table, 'dissolved')[0][1])
+        self.assertEqual([[1, 'Doors &amp; Frames']], self.lookup(table, 'labelled'))
+
+    def test_a_column_that_opts_out_keeps_its_lookup(self):
+        table = self.table(self.keyed_by_name(page_escape=False))
+        self.assertEqual([[MARKUP, 'Painting']], self.lookup(table, 'stage'))
+
+
+class TestALookupWithoutEscaping(LookupTestCase):
+    def test_the_page_gets_the_lookup_as_it_was(self):
+        table = self.table(self.keyed_by_name())
+        self.assertEqual([[MARKUP, 'Painting']], self.lookup(table, 'stage'))

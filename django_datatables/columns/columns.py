@@ -196,7 +196,10 @@ class BooleanColumn(DatatableColumn):
 
     def setup_replace(self, replace):
         self.options['render'] = [{'function': 'ReplaceLookup', 'html': '%1%', 'var': '%1%'}]
-        self.options['lookup'] = [(self.choices[c], r) for c, r in enumerate(replace)]
+        # replace is html for each choice, by definition, so it is marked safe: a table escaping its cells
+        # (and their lookups) for the page leaves it as it is.
+        self.options['lookup'] = [(self.choices[c], mark_safe(r) if isinstance(r, str) else r)
+                                  for c, r in enumerate(replace)]
         self.options['no_col_search'] = True
 
     def row_result(self, data, _page_data):

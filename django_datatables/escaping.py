@@ -7,6 +7,10 @@ that built it marked it safe -- ``format_html``, ``mark_safe`` and ``escape`` al
 column opts out with ``page_escape = False``. A forgotten mark then shows its tags as text rather than running. It is
 the default Django templates use.
 
+A lookup's labels go the same way: the ``[key, label]`` pairs a column hands the page for its ``ReplaceLookup``
+render are escaped with its cells (``DatatableTable.page_options``), the keys as the cells are, so they still
+match.
+
 Only the page is escaped. ``DatatableTable.get_table_array`` still hands everything else -- an Excel download, the
 clipboard, a spreadsheet -- what the columns read.
 

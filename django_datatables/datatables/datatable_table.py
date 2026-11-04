@@ -15,7 +15,7 @@ from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY
 from django_datatables.helpers import convert_to_q
 from django_datatables.datatables.column_initialiser import ColumnInitialisor
 from django_datatables.datatables.datatable_error import DatatableError, RefusedColumnError
-from django_datatables.escaping import escape_cells_setting
+from django_datatables.escaping import escape_cells_setting, page_cell
 from django_datatables.filters import DatatableFilter
 from django_datatables.models import SavedState
 from django_datatables.permissions import is_permitted
@@ -387,7 +387,7 @@ class DatatableTable:
                                  for i, c in enumerate(self.columns)]
         table_vars = {
             'field_ids': self.all_names(),
-            'colOptions': [c.options for c in self.columns],
+            'colOptions': [self.page_options(c) for c in self.columns],
             'tableOptions': options,
             'local_storage_key': self.local_storage_key,
             # The page's own scripts read a cell back as text -- the in-place editor fills its input from one --
@@ -469,6 +469,19 @@ class DatatableTable:
             return rows
         return [[cell if column.page_escape is False else column.page_value(cell)
                  for cell, column in zip(row, self.columns)] for row in rows]
+
+    def page_options(self, column):
+        """A column's options as the page gets them. A lookup is ``[key, label]`` pairs the page's ``ReplaceLookup``
+        writes a label of into markup, found by matching its key against the cell. So while the table escapes its
+        cells, each label is escaped unless it is marked safe, and each key the way the column's cells are, so a
+        lookup keyed by stored text still matches them. A column that opts out (``page_escape = False``) keeps
+        both as they are, as it keeps its cells. ``column.options`` itself is left as it is."""
+        options = column.options
+        lookup = options.get('lookup')
+        if not lookup or column.page_escape is False or not self.escapes_cells():
+            return options
+        return {**options, 'lookup': [[column.page_value(entry[0]), page_cell(entry[1]), *entry[2:]]
+                                      for entry in lookup]}
 
     def get_page_array(self, request, results):
         """``get_table_array`` for the page: what every writer of rows for the page sends. Anything that is
