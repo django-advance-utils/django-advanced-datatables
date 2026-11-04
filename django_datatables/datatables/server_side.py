@@ -396,7 +396,7 @@ class ServerSideTable(DatatableTable):
 
         # Slice for the current page.
         page_data = list(queryset[start:start + length])
-        data = self.get_table_array(request, page_data)
+        data = self.get_page_array(request, page_data)
 
         result = {
             'draw': draw,

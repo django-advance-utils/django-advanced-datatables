@@ -45,6 +45,11 @@ class ColumnBase:
     # this to 1 so the export gets the displayed text rather than the row's pk.
     excel_array_index = None
 
+    # False leaves this column's cells as they are when the table escapes its cells for the page
+    # (django_datatables.escaping): for a value the page reads as data rather than shows -- a lookup's key, a
+    # url for a script -- which escaping would change. Also a keyword: page_escape=False.
+    page_escape = True
+
     @staticmethod
     def merge_kwargs_locals(local_vars):
         kwargs = local_vars.pop('kwargs', {})

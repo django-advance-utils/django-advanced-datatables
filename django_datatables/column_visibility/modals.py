@@ -9,7 +9,7 @@ from django_modals.modals import FormModal
 from django_datatables.constants import HIDE_OPTIONAL
 from django_datatables.datatables import DatatableTable
 from django_datatables.models import SavedState
-from django_datatables.reorder_datatable import OrderedDatatable
+from django_datatables.reorder_datatable import OrderedDatatable, REORDER_HANDLE
 
 
 def save_table_state(user_id, table_id, view_class, name, column_order=None, column_visibility=None, state=None,
@@ -82,7 +82,7 @@ class ColumnForm(CrispyForm):
             modal_table.table_data.append({
                 'index': order,
                 'pk': column.column_name,
-                'handle': '<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>',
+                'handle': REORDER_HANDLE,
                 'order': order,
                 'column': column.title,
                 'col': column.column_name,

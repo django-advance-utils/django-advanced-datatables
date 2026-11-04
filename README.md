@@ -363,6 +363,37 @@ class FullName(DatatableColumn):
         return f'{data_dict["first_name"]} {data_dict["surname"]}'
 ```
 
+### Escaping Cells
+
+DataTables writes every cell into the page as HTML, and a column hands it what it read as it is stored. So a
+name somebody typed with a tag in it runs in the browser of everyone who opens the table, unless its column
+escapes it. Turn on escaping for every cell instead:
+
+```python
+# settings.py
+DATATABLES_ESCAPE_CELLS = True
+```
+
+Each cell is then escaped on its way to the page, unless the code that built it marked it safe. `format_html`,
+`mark_safe` and `escape` all return a `SafeString`, so markup a column builds round a name keeps working, and
+the name in it stays escaped:
+
+```python
+from django.utils.html import format_html
+
+class StatusColumn(DatatableColumn):
+    def row_result(self, data, _page_data):
+        return format_html('<span class="badge">{}</span>', data[self.field])
+```
+
+A column that returns markup as a plain string shows its tags as text: harmless, and easy to see. A column
+whose cells the page reads as data rather than shows (a lookup's key, a url for a script) opts out with the
+class attribute `page_escape = False`, or the keyword `page_escape=False`. A single table follows its own
+`escape_cells` (`True` or `False`) when it has one, whatever the setting.
+
+Only the page is escaped. `get_table_array` still gives the Excel download, the clipboard and a spreadsheet
+the text as it was typed; the page writers use `get_page_array`. It is off unless the setting turns it on.
+
 ### Table Options
 
 Common options passed via `table.table_options`:
