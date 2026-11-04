@@ -60,6 +60,16 @@ if (typeof django_datatables === 'undefined') {
             DataTables[table_id].send_row(command, row_id, column);
         }
 
+        function cell_text(datatable, value) {
+            // A table escaping its cells hands the page each one as html ('O&#x27;Brien &amp; Co'); an input
+            // wants the text it stands for, or an edit would save the entities. A table that does not escape
+            // hands it the text itself, which may hold an entity somebody typed.
+            if (!datatable.initsetup.escape_cells || typeof value !== 'string') return value
+            var decoder = document.createElement('textarea')
+            decoder.innerHTML = value
+            return decoder.value
+        }
+
         function make_edit(span) {
             var table_id = $(span).closest('table').attr('id');
             var datatable = django_datatables.DataTables[table_id]
@@ -69,7 +79,7 @@ if (typeof django_datatables === 'undefined') {
             $(cell).html(datatable.initsetup.colOptions[cell_index.column].input_html)
             var inp = $(cell).children()[0]
             if (inp.nodeName == 'SELECT'){
-                $(inp).val(datatable.table.api().row(cell_index.row).data()[cell_index.column][0])
+                $(inp).val(cell_text(datatable, datatable.table.api().row(cell_index.row).data()[cell_index.column][0]))
                 if (options !== null && options.select2){
                     $(inp).select2(
                             {minimumResultsForSearch: 10}
@@ -80,7 +90,7 @@ if (typeof django_datatables === 'undefined') {
                     $(inp).select2('open');
                 }
             } else{
-                $(inp).val(datatable.table.api().row(cell_index.row).data()[cell_index.column])
+                $(inp).val(cell_text(datatable, datatable.table.api().row(cell_index.row).data()[cell_index.column]))
             }
             $(inp).focus();
         }
@@ -96,12 +106,12 @@ if (typeof django_datatables === 'undefined') {
             $('input, select', row).each(function () {
                 var cell_index = datatable.table.api().cell($(this).closest('td')).index();
                 if (this.nodeName=='SELECT'){
-                    if (row_data[cell_index.column][0] != $(this).val()) {
+                    if (cell_text(datatable, row_data[cell_index.column][0]) != $(this).val()) {
                         changed.push(cell_index.column);
                         row_data[cell_index.column] = [$(this).val(), $("option:selected", $(this)).text()];
                     }
                 } else if (this.nodeName=='INPUT'){
-                    if (row_data[cell_index.column] != $(this).val()) {
+                    if (cell_text(datatable, row_data[cell_index.column]) != $(this).val()) {
                         changed.push(cell_index.column);
                         row_data[cell_index.column] = $(this).val();
                     }
@@ -273,6 +283,13 @@ if (typeof django_datatables === 'undefined') {
 
             numberWithCommas: function(x, decimal_places=0) {
                 return x.toFixed(decimal_places).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+            },
+
+            // Text, escaped to go into markup as text: for a label the server sends as it is stored.
+            escape_html: function (text) {
+                return String(text).replace(/[&<>"']/g, function (character) {
+                    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;'}[character]
+                })
             },
         }
 
@@ -534,8 +551,17 @@ if (typeof django_datatables === 'undefined') {
 
             this.html = function () {
                 var htmldata = ''
+                var filter = this
                 for (var k of this.filter_calcs.sort_keys()) {
-                    htmldata += this.options.htmlcheckbox.replace(/%1/g, k).replace(/%6/g, encodeURI(k))
+                    // The key goes into data-value through the page's HTML parser, which decodes entities: a
+                    // cell escaped for the page ('Paint &amp; Finish') came back off its checkbox as
+                    // 'Paint & Finish' and matched none of its rows. encodeURI already encodes <, >, " and %,
+                    // so escaping the & hands the key back as written. One pass fills both placeholders, so
+                    // neither is looked for in a value written in place of the other.
+                    var key = encodeURI(k).replace(/&/g, '&amp;')
+                    htmldata += this.options.htmlcheckbox.replace(/%([16])/g, function (placeholder, number) {
+                        return number === '1' ? filter.label(k) : key
+                    })
                 }
                 var context = $('#' + this.html_id)
                 $('.filter-content', context).html(htmldata)
@@ -544,6 +570,12 @@ if (typeof django_datatables === 'undefined') {
                 $(".none-check", context).click(this.this_fn('checkall', false))
                 this.restore_state()
                 this.buildfilter(false)
+            }
+
+            // A key as its checkbox is labelled. Here a key is a cell, which reaches the page escaped when the
+            // table escapes its cells, so it is written as it is; a server's keys are its stored values.
+            this.label = function (key) {
+                return key
             }
 
             this.checkall = function (checked) {
@@ -584,6 +616,10 @@ if (typeof django_datatables === 'undefined') {
             this.filter = function (data) {
                 return true
             }
+
+            // The keys are the server's values as stored, not cells, so each is written as text: a name
+            // typed with a tag ran when the filter was drawn.
+            this.label = utilities.escape_html
 
             var pivot_html = this.html
             this.html = function () {

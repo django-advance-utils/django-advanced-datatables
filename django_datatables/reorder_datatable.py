@@ -1,4 +1,9 @@
+from django.utils.safestring import mark_safe
+
 from django_datatables.datatables import DatatableView, DatatableTable
+
+# Markup, so marked safe: a table that escapes its cells for the page leaves it as it is.
+REORDER_HANDLE = mark_safe('<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>')
 
 
 def reorder(model, order_field, sort_data):
@@ -40,7 +45,7 @@ class OrderedDatatable(DatatableTable):
         data = super().get_query(**kwargs).order_by(self.order_field)
         for i, d in enumerate(data):
             d['index'] = i
-            d['handle'] = '<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>'
+            d['handle'] = REORDER_HANDLE
         return data
 
     def col_def_str(self):

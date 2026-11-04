@@ -9,7 +9,7 @@ from django_modals.modals import FormModal
 from django_datatables.constants import HIDE_OPTIONAL
 from django_datatables.datatables import DatatableTable
 from django_datatables.models import SavedState
-from django_datatables.reorder_datatable import OrderedDatatable
+from django_datatables.reorder_datatable import OrderedDatatable, REORDER_HANDLE
 
 
 def save_table_state(user_id, table_id, view_class, name, column_order=None, column_visibility=None, state=None,
@@ -69,7 +69,10 @@ class ColumnForm(CrispyForm):
         b64_key = base64.b64encode(table.session_key().encode('utf8')).decode("utf-8").rstrip('=')
 
         modal_table = OrderedDatatable(b64_key, order_field='order')
-        modal_table.add_columns('enable', '.col', 'column', '.order', check_permissions=False)
+        # A title is written into the table's header as html (SelectColumn's is two buttons), so it is listed
+        # here the same way, whether or not the table escapes its cells.
+        modal_table.add_columns('enable', '.col', ('column', {'page_escape': False}), '.order',
+                                check_permissions=False)
         col_order = table.session_column_order()
 
         modal_table.table_data = []
@@ -82,7 +85,7 @@ class ColumnForm(CrispyForm):
             modal_table.table_data.append({
                 'index': order,
                 'pk': column.column_name,
-                'handle': '<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>',
+                'handle': REORDER_HANDLE,
                 'order': order,
                 'column': column.title,
                 'col': column.column_name,

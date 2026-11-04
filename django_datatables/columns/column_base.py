@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.db.models.expressions import Case, F, Subquery, When
 from django.forms.widgets import Select
 
+from django_datatables.escaping import page_cell
 from django_datatables.helpers import render_replace
 
 
@@ -44,6 +45,11 @@ class ColumnBase:
     # None exports the value as-is; link-style columns whose row_result is [ref, text] set
     # this to 1 so the export gets the displayed text rather than the row's pk.
     excel_array_index = None
+
+    # False leaves this column's cells as they are when the table escapes its cells for the page
+    # (django_datatables.escaping): for a value the page reads as data rather than shows -- a lookup's key, a
+    # url for a script -- which escaping would change. Also a keyword: page_escape=False.
+    page_escape = True
 
     @staticmethod
     def merge_kwargs_locals(local_vars):
@@ -413,6 +419,14 @@ class ColumnBase:
             else:
                 self.options[a] = value
         return self
+
+    def page_value(self, value):
+        """This column's cell as the page gets it, while the table escapes its cells (django_datatables.escaping).
+
+        A column that builds markup of its own round text it reads can override this to escape the text alone,
+        leaving row_result -- which downloads, the clipboard and spreadsheets read too -- as it is.
+        """
+        return page_cell(value)
 
     def excel(self, value):
         """Convert a row_result value into something openpyxl can write.

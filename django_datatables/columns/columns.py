@@ -1,6 +1,8 @@
 import base64
 from html.parser import HTMLParser
 
+from django.utils.html import conditional_escape
+from django.utils.safestring import SafeData, mark_safe
 from django_menus.menu import HtmlMenu, MenuItem
 
 from django_datatables.columns.column_base import ColumnBase, DatatableColumnError
@@ -36,6 +38,14 @@ class TextFieldColumn(ColumnBase):
         if len(result) > self.kwargs.get('max_chars'):
             result = result[:self.kwargs.get('max_chars')] + '...'
         return result.replace('\n', '<br>')
+
+    def page_value(self, value):
+        # row_result writes the field's newlines as <br>, so the page gets the text escaped and those put back:
+        # the line breaks are the only markup in the cell. (A <br> typed into the text reads as a line break, as
+        # it did before the table escaped its cells.)
+        if isinstance(value, str) and not isinstance(value, SafeData):
+            return mark_safe(conditional_escape(value).replace('&lt;br&gt;', '<br>'))
+        return value
 
     def __init__(self, max_chars=8000, **kwargs):
         if not self.initialise(locals()):
@@ -186,7 +196,10 @@ class BooleanColumn(DatatableColumn):
 
     def setup_replace(self, replace):
         self.options['render'] = [{'function': 'ReplaceLookup', 'html': '%1%', 'var': '%1%'}]
-        self.options['lookup'] = [(self.choices[c], r) for c, r in enumerate(replace)]
+        # replace is html for each choice, by definition, so it is marked safe: a table escaping its cells
+        # (and their lookups) for the page leaves it as it is.
+        self.options['lookup'] = [(self.choices[c], mark_safe(r) if isinstance(r, str) else r)
+                                  for c, r in enumerate(replace)]
         self.options['no_col_search'] = True
 
     def row_result(self, data, _page_data):

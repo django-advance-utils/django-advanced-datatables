@@ -12,8 +12,9 @@ from django.contrib.auth.models import AnonymousUser
 from django.db.models import Count, Q
 from django.db.models.functions import Upper
 from django.http import QueryDict
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
+from django.utils.html import format_html
 from django_menus.menu import HtmlMenu
 from openpyxl import load_workbook
 
@@ -37,6 +38,10 @@ from django_datatables.datatables import DatatableTable, DatatableView
 from django_datatables.datatables.datatable_error import DatatableError
 from django_datatables.filters import PythonPivotFilter
 from django_datatables.datatables.server_side import ServerSideTable
+from django_datatables.datatables.datatable_table import HorizontalTable
+from django_datatables.column_visibility.modals import ColumnForm
+from django_datatables.escaping import page_cell
+from django_datatables.reorder_datatable import OrderedDatatable
 from django_datatables.downloads.excel_download import ExcelDownload
 from django_datatables.server_side_filters import (ServerDateFilter, ServerPivotFilter, ServerSelect2Filter,
                                                    ServerTagFilter, ServerTotalsFilter, ServerValuesFilter)
@@ -1492,3 +1497,299 @@ class TestRefreshRows(TestCase):
         self.assertEqual(commands[0]['rows'][self.row_no('Dave')][1], 'Dave')
         self.assertEqual(json.loads(view.row_refresh_many(table_id='nope', row_nos=[self.row_no('Dave')]).content),
                          [{'function': 'null'}])
+
+
+MARKUP = '<img src=x onerror=alert(1)>'
+ESCAPED = '&lt;img src=x onerror=alert(1)&gt;'
+
+
+class TestPageCell(TestCase):
+    """``page_cell``: what one cell becomes on its way to the page while a table escapes its cells."""
+
+    def test_text_is_escaped(self):
+        self.assertEqual(ESCAPED, page_cell(MARKUP))
+        self.assertEqual('Doors &amp; Frames', page_cell('Doors & Frames'))
+
+    def test_text_that_reads_as_an_entity_is_escaped_once_more(self):
+        # A plain string is text: what somebody typed as '&amp;' is shown as '&amp;'.
+        self.assertEqual('&amp;amp;', page_cell('&amp;'))
+
+    def test_markup_marked_safe_is_left_as_it_is(self):
+        link = format_html('<a href="/x/">{}</a>', MARKUP)
+        self.assertIs(link, page_cell(link))
+
+    def test_a_number_a_bool_and_nothing_are_left_as_they_are(self):
+        for value in (7, 2.5, True, None, Decimal('1.50')):
+            with self.subTest(value=value):
+                self.assertEqual(value, page_cell(value))
+
+    def test_each_item_of_a_list_is_escaped(self):
+        self.assertEqual([7, ESCAPED], page_cell([7, MARKUP]))
+        self.assertEqual([7, ESCAPED], page_cell((7, MARKUP)))
+
+
+class SafeNameColumn(DatatableColumn):
+    """A column building markup round a name, as a column should: format_html escapes the name and marks the rest."""
+
+    def row_result(self, data, _page_data):
+        return format_html('<b>{}</b>', data[self.field])
+
+
+class EscapingTableTestCase(TestCase):
+    def setUp(self):
+        self.company = Company.objects.create(name=MARKUP)
+        self.request = RequestFactory().get('/')
+        self.request.user = AnonymousUser()
+
+    def table(self, *columns, table_class=DatatableTable):
+        table = table_class('escaping', model=Company)
+        table.add_columns('id', *(columns or ('name',)))
+        table.filter = {'pk': self.company.pk}
+        return table
+
+    @staticmethod
+    def row_cells(table, row):
+        return dict(zip(table.all_names(), row))
+
+
+@override_settings(DATATABLES_ESCAPE_CELLS=True)
+class TestEveryWriterEscapesForThePage(EscapingTableTestCase):
+    """With the setting on, each place a table writes rows for the page hands it the text escaped."""
+
+    def test_the_ajax_rows(self):
+        table = self.table()
+        (row,) = json.loads(table.get_json(self.request, table.get_query()))['data']
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
+
+    def test_rows_written_into_the_page_with_the_table(self):
+        table = self.table()
+        table.ajax_data = False
+        (row,) = json.loads(table.col_def_str())['tableOptions']['data']
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
+
+    def test_rows_a_view_hands_the_table_itself(self):
+        table = DatatableTable('escaping')
+        table.add_columns('.id', 'name')
+        table.table_data = [{'id': 1, 'name': MARKUP}]
+        (row,) = json.loads(table.col_def_str())['tableOptions']['data']
+        self.assertEqual([1, ESCAPED], row)
+
+    def test_a_row_redrawn_after_an_edit(self):
+        table = self.table()
+        command = table.refresh_row_command(self.request, f'i{self.company.pk}')
+        self.assertEqual(ESCAPED, self.row_cells(table, command['data'])['name'])
+
+    def test_rows_redrawn_together_keyed_by_their_id(self):
+        table = self.table()
+        command = table.refresh_rows_command(self.request, [f'i{self.company.pk}'])
+        (key, row), = command['rows'].items()
+        self.assertEqual(f'i{self.company.pk}', key)
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
+
+    def test_a_server_side_page(self):
+        table = self.table(table_class=ServerSideTable)
+        result = json.loads(table.get_server_side_json(self.request, table.get_query(), QueryDict('draw=1')))
+        (row,) = result['data']
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
+
+    def test_a_record_shown_as_two_columns(self):
+        table = HorizontalTable('escaping', model=Company, pk=self.company.pk, request=self.request)
+        table.add_columns('id', 'name')
+        (row,) = json.loads(table.model_table_setup())['data']
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
+
+    def test_the_page_is_told_its_cells_are_escaped(self):
+        """The page's own scripts read a cell back as text, the in-place editor among them."""
+        table = self.table()
+        self.assertIs(True, json.loads(table.col_def_str())['escape_cells'])
+        table.escape_cells = False
+        self.assertIs(False, json.loads(table.col_def_str())['escape_cells'])
+
+    def test_a_link_columns_text_is_escaped_and_its_reference_kept(self):
+        table = self.table(ColumnLink(column_name='link', field=['id', 'name'], url_name='column_visibility'))
+        (row,) = json.loads(table.get_json(self.request, table.get_query()))['data']
+        self.assertEqual([self.company.pk, ESCAPED], self.row_cells(table, row)['link'])
+
+
+@override_settings(DATATABLES_ESCAPE_CELLS=True)
+class TestWhatEscapingLeavesAlone(EscapingTableTestCase):
+
+    def test_markup_marked_safe(self):
+        table = self.table(SafeNameColumn(column_name='bold', field='name'))
+        (row,) = table.get_page_array(self.request, table.get_query())
+        self.assertEqual(f'<b>{ESCAPED}</b>', self.row_cells(table, row)['bold'])
+
+    def test_a_column_that_opts_out(self):
+        class KeyColumn(DatatableColumn):
+            page_escape = False
+
+        for column in (KeyColumn(column_name='key', field='name'),
+                       DatatableColumn(column_name='key', field='name', page_escape=False)):
+            with self.subTest(column=type(column).__name__):
+                table = self.table(column)
+                (row,) = table.get_page_array(self.request, table.get_query())
+                self.assertEqual(MARKUP, self.row_cells(table, row)['key'])
+
+    def test_what_is_not_a_page(self):
+        """get_table_array feeds downloads, the clipboard and spreadsheets, which want the text as it was typed."""
+        table = self.table()
+        (row,) = table.get_table_array(self.request, table.get_query())
+        self.assertEqual(MARKUP, self.row_cells(table, row)['name'])
+        (row,) = json.loads(table.table_json_data())
+        self.assertEqual(MARKUP, self.row_cells(table, row)['name'])
+
+    def test_a_table_can_turn_it_off_for_itself(self):
+        table = self.table()
+        table.escape_cells = False
+        (row,) = table.get_page_array(self.request, table.get_query())
+        self.assertEqual(MARKUP, self.row_cells(table, row)['name'])
+
+    def test_the_reorder_handle(self):
+        table = OrderedDatatable('ordered', model=Company, order_field='order')
+        table.add_columns('name')
+        rows = [self.row_cells(table, row) for row in table.get_page_array(self.request, table.get_query())]
+        self.assertIn('<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>', rows[0].values())
+        self.assertEqual([ESCAPED], [row['name'] for row in rows])
+
+    def test_the_column_visibility_modals_handle_checkbox_and_titles(self):
+        """A title is written into the table's header as html -- SelectColumn's is two buttons -- so the modal
+        lists it the same way."""
+        table = self.table(SelectColumn(column_name='pick'))
+        form = ColumnForm.create_from_table(table, has_default=False)
+        rows = [self.row_cells(form.table, row)
+                for row in form.table.get_page_array(self.request, form.table.table_data)]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIn('<i class="btn', row['handle'])
+            self.assertIn('<input', row['enable'])
+        (pick,) = [row for row in rows if row['col'] == 'pick']
+        self.assertIn('<div class="d-flex"', pick['column'])
+
+
+class TestOffByDefault(EscapingTableTestCase):
+    """Without the setting the page gets what the columns read, as it always has."""
+
+    def test_the_page_gets_the_cell_as_read(self):
+        table = self.table()
+        (row,) = json.loads(table.get_json(self.request, table.get_query()))['data']
+        self.assertEqual(MARKUP, self.row_cells(table, row)['name'])
+
+    def test_a_table_can_turn_it_on_for_itself(self):
+        table = self.table()
+        table.escape_cells = True
+        (row,) = json.loads(table.get_json(self.request, table.get_query()))['data']
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
+
+
+class TestTextFieldColumnEscaping(TestCase):
+    """TextFieldColumn turns newlines into <br>. Escaping the cell afterwards would print the <br>, so on its way to
+    the page the column escapes the text and puts the line breaks back. What it reads for anything else -- a
+    download, the clipboard, a spreadsheet -- is as it was."""
+
+    TYPED = f'Line one & {MARKUP}\nLine two'
+
+    def rows(self):
+        table = DatatableTable('notes')
+        table.add_columns(TextFieldColumn(column_name='notes', field='notes'))
+        table.table_data = [{'notes': self.TYPED}]
+        (column,) = table.columns
+        (cell,), = table.get_table_array(None, table.table_data)
+        (page_cell_value,), = table.get_page_array(None, table.table_data)
+        return column, cell, page_cell_value
+
+    @override_settings(DATATABLES_ESCAPE_CELLS=True)
+    def test_escaping_keeps_the_line_breaks(self):
+        column, cell, page = self.rows()
+        self.assertEqual(f'Line one &amp; {ESCAPED}<br>Line two', page)
+        self.assertEqual(f'Line one & {MARKUP}<br>Line two', cell)
+        self.assertEqual(self.TYPED, column.excel(cell))
+
+    @override_settings(DATATABLES_ESCAPE_CELLS=True)
+    def test_a_spreadsheet_gets_the_text_as_it_was(self):
+        table = DatatableTable('notes', model=Company)
+        table.add_columns('id', TextFieldColumn(column_name='notes', field='name'))
+        Company.objects.create(name='Doors & Frames')
+        (row,) = json.loads(table.table_json_data())
+        self.assertEqual('Doors & Frames', row[1])
+
+    def test_without_escaping_it_is_as_it_was(self):
+        column, cell, page = self.rows()
+        self.assertEqual(f'Line one & {MARKUP}<br>Line two', page)
+        self.assertEqual(self.TYPED, column.excel(cell))
+
+
+@override_settings(DATATABLES_ESCAPE_CELLS=True)
+class TestARowEditSavesWhatWasTyped(EscapingTableTestCase):
+    """The server half of an in-place edit: what the input posts is saved as it is, and the row redrawn after it
+    reaches the page escaped once. (The page fills the input with the text an escaped cell stands for -- cell_text in
+    filtered-datatable.js -- so it posts the text, not its entities.)"""
+
+    def test_the_saved_value_is_what_was_posted(self):
+        typed = "O'Brien & Co <b>"
+        table = DatatableTable('editing', model=Company)
+        table.edit_fields = ['name']
+        table.add_columns('id', 'name')
+        column, _ = table.find_column('name')
+
+        column.alter_object(self.company, typed)
+        command = table.refresh_row_command(self.request, f'i{self.company.pk}')
+
+        self.company.refresh_from_db()
+        self.assertEqual(typed, self.company.name)
+        self.assertEqual('O&#x27;Brien &amp; Co &lt;b&gt;', self.row_cells(table, command['data'])['name'])
+
+
+class LookupTestCase(EscapingTableTestCase):
+    def lookup(self, table, column_name):
+        """The lookup the page is handed for a column, as a list of [key, label, ...] pairs."""
+        options = json.loads(table.col_def_str())['colOptions']
+        return options[table.all_names().index(column_name)]['lookup']
+
+    @staticmethod
+    def keyed_by_name(**kwargs):
+        """A column whose cell is the company's name, and whose lookup is keyed by the name as stored."""
+        return DatatableColumn(column_name='stage', field='name',
+                               render=[{'function': 'ReplaceLookup', 'html': '<b>%1%</b>', 'var': '%1%'}],
+                               lookup=[(MARKUP, 'Painting')], **kwargs)
+
+
+@override_settings(DATATABLES_ESCAPE_CELLS=True)
+class TestALookupGoesWithItsCells(LookupTestCase):
+    """A lookup's labels are written into markup by the page's ReplaceLookup, so they are escaped with the cells;
+    its keys are matched against the cells, so they are escaped as the cells are."""
+
+    def test_a_many_to_many_columns_names(self):
+        tag = Tags.objects.create(tag=MARKUP)
+        tag.company.add(self.company)
+        table = self.table(ManyToManyColumn(column_name='CompanyTags', field='tags__tag', model=Company, html='%1%'))
+
+        self.assertIn([tag.pk, ESCAPED], self.lookup(table, 'CompanyTags'))
+        column, _ = table.find_column('CompanyTags')
+        self.assertIn((tag.pk, MARKUP), column.options['lookup'])  # what the server's own filters read
+
+    def test_a_lookup_keyed_by_stored_text_still_finds_its_cell(self):
+        table = self.table(self.keyed_by_name())
+
+        (row,) = table.get_page_array(self.request, table.get_query())
+
+        self.assertEqual([[ESCAPED, 'Painting']], self.lookup(table, 'stage'))
+        self.assertEqual(ESCAPED, self.row_cells(table, row)['stage'])
+
+    def test_a_label_marked_safe_and_a_tick(self):
+        table = self.table(
+            TickColumn(column_name='dissolved', field='dissolved'),
+            DatatableColumn(column_name='labelled', field='id', lookup=[(1, format_html('{}', 'Doors & Frames'))]),
+        )
+
+        self.assertIn('<i class="text-success fas fa-check-circle">', self.lookup(table, 'dissolved')[0][1])
+        self.assertEqual([[1, 'Doors &amp; Frames']], self.lookup(table, 'labelled'))
+
+    def test_a_column_that_opts_out_keeps_its_lookup(self):
+        table = self.table(self.keyed_by_name(page_escape=False))
+        self.assertEqual([[MARKUP, 'Painting']], self.lookup(table, 'stage'))
+
+
+class TestALookupWithoutEscaping(LookupTestCase):
+    def test_the_page_gets_the_lookup_as_it_was(self):
+        table = self.table(self.keyed_by_name())
+        self.assertEqual([[MARKUP, 'Painting']], self.lookup(table, 'stage'))

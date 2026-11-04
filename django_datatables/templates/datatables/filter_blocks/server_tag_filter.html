@@ -123,7 +123,14 @@
                 if (!this.facets_loaded) return
                 var html = ""
                 for (var k of this.filter_calcs.sort_keys()) {
-                    html += rep_options(this.options.tagcheckbox, {1: k, 3: this.column_no, 4: encodeURI(k)})
+                    // The label is the server's value as stored, so it is written as text, and the key is
+                    // escaped so the parser hands it back as written, as the pivot's. One pass fills them all,
+                    // so none is looked for in a value written in place of another.
+                    var values = {1: django_datatables.utilities.escape_html(k), 3: this.column_no,
+                                  4: encodeURI(k).replace(/&/g, '&amp;')}
+                    html += this.options.tagcheckbox.replace(/%([134])/g, function (placeholder, number) {
+                        return values[number]
+                    })
                 }
                 var context = $('#' + this.html_id)
                 $('.filter-content', context).html(html)

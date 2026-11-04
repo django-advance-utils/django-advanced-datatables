@@ -363,6 +363,44 @@ class FullName(DatatableColumn):
         return f'{data_dict["first_name"]} {data_dict["surname"]}'
 ```
 
+### Escaping Cells
+
+DataTables writes every cell into the page as HTML, and a column hands it what it read as it is stored. So a
+name somebody typed with a tag in it runs in the browser of everyone who opens the table, unless its column
+escapes it. Turn on escaping for every cell instead:
+
+```python
+# settings.py
+DATATABLES_ESCAPE_CELLS = True
+```
+
+Each cell is then escaped on its way to the page, unless the code that built it marked it safe. `format_html`,
+`mark_safe` and `escape` all return a `SafeString`, so markup a column builds round a name keeps working, and
+the name in it stays escaped:
+
+```python
+from django.utils.html import format_html
+
+class StatusColumn(DatatableColumn):
+    def row_result(self, data, _page_data):
+        return format_html('<span class="badge">{}</span>', data[self.field])
+```
+
+A column that returns markup as a plain string shows its tags as text: harmless, and easy to see. A column
+whose cells the page reads as data rather than shows (a lookup's key, a url for a script) opts out with the
+class attribute `page_escape = False`, or the keyword `page_escape=False`. A column that builds markup of its
+own round text it reads can override `page_value(value)` to escape the text alone on its way to the page, as
+`TextFieldColumn` does to keep its line breaks. A single table follows its own `escape_cells` (`True` or
+`False`) when it has one, whatever the setting.
+
+A lookup goes the same way. The `[key, label]` pairs a column hands the page for a `ReplaceLookup` render (a
+`ManyToManyColumn`'s names, a `BooleanColumn`'s `replace`) have their labels escaped unless marked safe, and
+their keys escaped as the cells are, so a lookup keyed by stored text still finds its cells. A `BooleanColumn`'s
+`replace` is html by definition and is marked safe for you.
+
+Only the page is escaped. `get_table_array` still gives the Excel download, the clipboard and a spreadsheet
+the text as it was typed; the page writers use `get_page_array`. It is off unless the setting turns it on.
+
 ### Table Options
 
 Common options passed via `table.table_options`:
