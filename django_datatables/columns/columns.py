@@ -1,5 +1,4 @@
 import base64
-from html import unescape
 from html.parser import HTMLParser
 
 from django.utils.html import conditional_escape
@@ -8,7 +7,6 @@ from django_menus.menu import HtmlMenu, MenuItem
 
 from django_datatables.columns.column_base import ColumnBase, DatatableColumnError
 from django_datatables.columns.currency import CurrencyPenceColumn
-from django_datatables.escaping import escape_cells_setting
 from django_datatables.helpers import get_url, render_replace, DUMMY_ID, DUMMY_ID2
 
 
@@ -39,13 +37,15 @@ class TextFieldColumn(ColumnBase):
             return ''
         if len(result) > self.kwargs.get('max_chars'):
             result = result[:self.kwargs.get('max_chars')] + '...'
-        if self.escapes_text():
-            # Escaped before its newlines become <br>, so the line breaks are the only markup in the cell.
-            return mark_safe(conditional_escape(result).replace('\n', '<br>'))
         return result.replace('\n', '<br>')
 
-    def escapes_text(self):
-        return self.table.escapes_cells() if self.table is not None else escape_cells_setting()
+    def page_value(self, value):
+        # row_result writes the field's newlines as <br>, so the page gets the text escaped and those put back:
+        # the line breaks are the only markup in the cell. (A <br> typed into the text reads as a line break, as
+        # it did before the table escaped its cells.)
+        if isinstance(value, str) and not isinstance(value, SafeData):
+            return mark_safe(conditional_escape(value).replace('&lt;br&gt;', '<br>'))
+        return value
 
     def __init__(self, max_chars=8000, **kwargs):
         if not self.initialise(locals()):
@@ -58,9 +58,7 @@ class TextFieldColumn(ColumnBase):
         # row_result substitutes <br> for the field's newlines - put them back.
         if value is None:
             return ''
-        text = str(value).replace('<br>', '\n')
-        # Escaped for the page (escapes_text): the spreadsheet wants the text as it was typed.
-        return unescape(text) if isinstance(value, SafeData) else text
+        return str(value).replace('<br>', '\n')
 
 
 class ColumnLink(ColumnBase):

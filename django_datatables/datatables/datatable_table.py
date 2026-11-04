@@ -15,7 +15,7 @@ from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY
 from django_datatables.helpers import convert_to_q
 from django_datatables.datatables.column_initialiser import ColumnInitialisor
 from django_datatables.datatables.datatable_error import DatatableError, RefusedColumnError
-from django_datatables.escaping import escape_cells_setting, page_cell
+from django_datatables.escaping import escape_cells_setting
 from django_datatables.filters import DatatableFilter
 from django_datatables.models import SavedState
 from django_datatables.permissions import is_permitted
@@ -390,6 +390,9 @@ class DatatableTable:
             'colOptions': [c.options for c in self.columns],
             'tableOptions': options,
             'local_storage_key': self.local_storage_key,
+            # The page's own scripts read a cell back as text -- the in-place editor fills its input from one --
+            # so they need to know whether the cells reach them escaped.
+            'escape_cells': self.escapes_cells(),
         }
         if self.session_or_default:
             table_vars['state'] = self.session_or_default_state()
@@ -464,8 +467,8 @@ class DatatableTable:
         it is marked safe or its column opts out (``page_escape = False``); otherwise they are as they were."""
         if not self.escapes_cells():
             return rows
-        kept = [column.page_escape is False for column in self.columns]
-        return [[cell if keep else page_cell(cell) for cell, keep in zip(row, kept)] for row in rows]
+        return [[cell if column.page_escape is False else column.page_value(cell)
+                 for cell, column in zip(row, self.columns)] for row in rows]
 
     def get_page_array(self, request, results):
         """``get_table_array`` for the page: what every writer of rows for the page sends. Anything that is

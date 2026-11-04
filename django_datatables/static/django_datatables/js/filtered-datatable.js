@@ -60,6 +60,16 @@ if (typeof django_datatables === 'undefined') {
             DataTables[table_id].send_row(command, row_id, column);
         }
 
+        function cell_text(datatable, value) {
+            // A table escaping its cells hands the page each one as html ('O&#x27;Brien &amp; Co'); an input
+            // wants the text it stands for, or an edit would save the entities. A table that does not escape
+            // hands it the text itself, which may hold an entity somebody typed.
+            if (!datatable.initsetup.escape_cells || typeof value !== 'string') return value
+            var decoder = document.createElement('textarea')
+            decoder.innerHTML = value
+            return decoder.value
+        }
+
         function make_edit(span) {
             var table_id = $(span).closest('table').attr('id');
             var datatable = django_datatables.DataTables[table_id]
@@ -69,7 +79,7 @@ if (typeof django_datatables === 'undefined') {
             $(cell).html(datatable.initsetup.colOptions[cell_index.column].input_html)
             var inp = $(cell).children()[0]
             if (inp.nodeName == 'SELECT'){
-                $(inp).val(datatable.table.api().row(cell_index.row).data()[cell_index.column][0])
+                $(inp).val(cell_text(datatable, datatable.table.api().row(cell_index.row).data()[cell_index.column][0]))
                 if (options !== null && options.select2){
                     $(inp).select2(
                             {minimumResultsForSearch: 10}
@@ -80,7 +90,7 @@ if (typeof django_datatables === 'undefined') {
                     $(inp).select2('open');
                 }
             } else{
-                $(inp).val(datatable.table.api().row(cell_index.row).data()[cell_index.column])
+                $(inp).val(cell_text(datatable, datatable.table.api().row(cell_index.row).data()[cell_index.column]))
             }
             $(inp).focus();
         }
@@ -96,12 +106,12 @@ if (typeof django_datatables === 'undefined') {
             $('input, select', row).each(function () {
                 var cell_index = datatable.table.api().cell($(this).closest('td')).index();
                 if (this.nodeName=='SELECT'){
-                    if (row_data[cell_index.column][0] != $(this).val()) {
+                    if (cell_text(datatable, row_data[cell_index.column][0]) != $(this).val()) {
                         changed.push(cell_index.column);
                         row_data[cell_index.column] = [$(this).val(), $("option:selected", $(this)).text()];
                     }
                 } else if (this.nodeName=='INPUT'){
-                    if (row_data[cell_index.column] != $(this).val()) {
+                    if (cell_text(datatable, row_data[cell_index.column]) != $(this).val()) {
                         changed.push(cell_index.column);
                         row_data[cell_index.column] = $(this).val();
                     }

@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.db.models.expressions import Case, F, Subquery, When
 from django.forms.widgets import Select
 
+from django_datatables.escaping import page_cell
 from django_datatables.helpers import render_replace
 
 
@@ -418,6 +419,14 @@ class ColumnBase:
             else:
                 self.options[a] = value
         return self
+
+    def page_value(self, value):
+        """This column's cell as the page gets it, while the table escapes its cells (django_datatables.escaping).
+
+        A column that builds markup of its own round text it reads can override this to escape the text alone,
+        leaving row_result -- which downloads, the clipboard and spreadsheets read too -- as it is.
+        """
+        return page_cell(value)
 
     def excel(self, value):
         """Convert a row_result value into something openpyxl can write.

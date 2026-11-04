@@ -1598,6 +1598,13 @@ class TestEveryWriterEscapesForThePage(EscapingTableTestCase):
         (row,) = json.loads(table.model_table_setup())['data']
         self.assertEqual(ESCAPED, self.row_cells(table, row)['name'])
 
+    def test_the_page_is_told_its_cells_are_escaped(self):
+        """The page's own scripts read a cell back as text, the in-place editor among them."""
+        table = self.table()
+        self.assertIs(True, json.loads(table.col_def_str())['escape_cells'])
+        table.escape_cells = False
+        self.assertIs(False, json.loads(table.col_def_str())['escape_cells'])
+
     def test_a_link_columns_text_is_escaped_and_its_reference_kept(self):
         table = self.table(ColumnLink(column_name='link', field=['id', 'name'], url_name='column_visibility'))
         (row,) = json.loads(table.get_json(self.request, table.get_query()))['data']
@@ -1644,8 +1651,10 @@ class TestWhatEscapingLeavesAlone(EscapingTableTestCase):
         self.assertIn('<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>', rows[0].values())
         self.assertEqual([ESCAPED], [row['name'] for row in rows])
 
-    def test_the_column_visibility_modals_handle_and_checkbox(self):
-        table = self.table()
+    def test_the_column_visibility_modals_handle_checkbox_and_titles(self):
+        """A title is written into the table's header as html -- SelectColumn's is two buttons -- so the modal
+        lists it the same way."""
+        table = self.table(SelectColumn(column_name='pick'))
         form = ColumnForm.create_from_table(table, has_default=False)
         rows = [self.row_cells(form.table, row)
                 for row in form.table.get_page_array(self.request, form.table.table_data)]
@@ -1653,6 +1662,8 @@ class TestWhatEscapingLeavesAlone(EscapingTableTestCase):
         for row in rows:
             self.assertIn('<i class="btn', row['handle'])
             self.assertIn('<input', row['enable'])
+        (pick,) = [row for row in rows if row['col'] == 'pick']
+        self.assertIn('<div class="d-flex"', pick['column'])
 
 
 class TestOffByDefault(EscapingTableTestCase):
@@ -1671,8 +1682,9 @@ class TestOffByDefault(EscapingTableTestCase):
 
 
 class TestTextFieldColumnEscaping(TestCase):
-    """TextFieldColumn turns newlines into <br>. Escaping the cell afterwards would print the <br>, so the column
-    escapes the text first and marks the line breaks safe; an export gets the text back as typed."""
+    """TextFieldColumn turns newlines into <br>. Escaping the cell afterwards would print the <br>, so on its way to
+    the page the column escapes the text and puts the line breaks back. What it reads for anything else -- a
+    download, the clipboard, a spreadsheet -- is as it was."""
 
     TYPED = f'Line one & {MARKUP}\nLine two'
 
@@ -1689,10 +1701,39 @@ class TestTextFieldColumnEscaping(TestCase):
     def test_escaping_keeps_the_line_breaks(self):
         column, cell, page = self.rows()
         self.assertEqual(f'Line one &amp; {ESCAPED}<br>Line two', page)
-        self.assertEqual(page, cell)
+        self.assertEqual(f'Line one & {MARKUP}<br>Line two', cell)
         self.assertEqual(self.TYPED, column.excel(cell))
+
+    @override_settings(DATATABLES_ESCAPE_CELLS=True)
+    def test_a_spreadsheet_gets_the_text_as_it_was(self):
+        table = DatatableTable('notes', model=Company)
+        table.add_columns('id', TextFieldColumn(column_name='notes', field='name'))
+        Company.objects.create(name='Doors & Frames')
+        (row,) = json.loads(table.table_json_data())
+        self.assertEqual('Doors & Frames', row[1])
 
     def test_without_escaping_it_is_as_it_was(self):
         column, cell, page = self.rows()
         self.assertEqual(f'Line one & {MARKUP}<br>Line two', page)
         self.assertEqual(self.TYPED, column.excel(cell))
+
+
+@override_settings(DATATABLES_ESCAPE_CELLS=True)
+class TestARowEditSavesWhatWasTyped(EscapingTableTestCase):
+    """The server half of an in-place edit: what the input posts is saved as it is, and the row redrawn after it
+    reaches the page escaped once. (The page fills the input with the text an escaped cell stands for -- cell_text in
+    filtered-datatable.js -- so it posts the text, not its entities.)"""
+
+    def test_the_saved_value_is_what_was_posted(self):
+        typed = "O'Brien & Co <b>"
+        table = DatatableTable('editing', model=Company)
+        table.edit_fields = ['name']
+        table.add_columns('id', 'name')
+        column, _ = table.find_column('name')
+
+        column.alter_object(self.company, typed)
+        command = table.refresh_row_command(self.request, f'i{self.company.pk}')
+
+        self.company.refresh_from_db()
+        self.assertEqual(typed, self.company.name)
+        self.assertEqual('O&#x27;Brien &amp; Co &lt;b&gt;', self.row_cells(table, command['data'])['name'])
