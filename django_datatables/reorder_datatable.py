@@ -1,4 +1,5 @@
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import BadRequest, PermissionDenied, ValidationError
+from django.db import router, transaction
 
 from django_datatables.datatables import DatatableView, DatatableTable
 
@@ -7,34 +8,39 @@ def reorder(model, order_field, sort_data, order_by=None):
     """Save the order a drag left the rows in, and return how many rows were written.
 
     ``sort_data`` is what the table sends after a drag: ``[position, pk]`` for each of its rows, the position
-    being where that row now stands. The rows are read in the order the table showed them (``order_by``, by
-    default the order field and then the primary key, so rows sharing a value always come in the same order);
-    when the positions sent leave them in that same order, nothing moved and nothing is written. Otherwise each
-    row whose value differs from its position is saved with it, through ``save()``, so ``auto_now`` fields and
-    signals see the change.
+    being where that row now stands. Each row whose value differs from its position is saved with it, through
+    ``save()``, so ``auto_now`` fields and signals see the change, all in one transaction.
 
-    A payload that is not a list of ``[position, pk]`` pairs writes nothing and returns 0.
+    ``order_by`` is the order the table showed the rows in. When it is given and the positions sent leave the
+    rows in that same order, nothing moved and nothing is written: rows sharing a value are not renumbered by a
+    handle let go where it was. Without it the order the rows were shown in is not known, so the positions are
+    always saved.
+
+    A payload that is not a list of ``[position, pk]`` pairs, each position a whole number of 0 or more, writes
+    nothing and returns 0. Positions are saved as sent, gaps and all.
     """
-    order_by = order_by or (order_field, 'pk')
     pk_field = model._meta.pk
     try:
         positions = {pk_field.to_python(pk): int(position) for position, pk in sort_data}
-    except (TypeError, ValueError, ValidationError):
+    except (TypeError, ValueError, OverflowError, ValidationError):
+        return 0
+    if any(position < 0 for position in positions.values()):
         return 0
 
-    rows = model.objects.filter(pk__in=positions).order_by(*order_by)
-    shown = [row.pk for row in rows]
-    wanted = sorted(shown, key=lambda pk: positions[pk])
-    if wanted == shown:
-        return 0
+    rows = list(model.objects.filter(pk__in=positions).order_by(*(order_by or (order_field, 'pk'))))
+    if order_by:
+        shown = [row.pk for row in rows]
+        if sorted(shown, key=lambda pk: positions[pk]) == shown:
+            return 0
 
     written = 0
-    for row in rows:
-        position = positions[row.pk]
-        if getattr(row, order_field) != position:
-            setattr(row, order_field, position)
-            row.save()
-            written += 1
+    with transaction.atomic(using=router.db_for_write(model)):
+        for row in rows:
+            position = positions[row.pk]
+            if getattr(row, order_field) != position:
+                setattr(row, order_field, position)
+                row.save()
+                written += 1
     return written
 
 
@@ -110,8 +116,11 @@ class ReorderDatatableView(DatatableView):
     def datatable_sort(self, **kwargs):
         if not self.can_reorder():
             raise PermissionDenied
-        table = self.tables[kwargs['table_id']]
-        reorder(table.model, table.order_field, kwargs['sort'], order_by=table.row_order)
+        table_id = kwargs.get('table_id')
+        table = self.tables.get(table_id) if isinstance(table_id, str) else None
+        if table is None:
+            raise BadRequest('Unknown table')
+        reorder(table.model, table.order_field, kwargs.get('sort'), order_by=table.row_order)
         # noinspection PyUnresolvedReferences
         return self.command_response('reload_table', table_id=kwargs['table_id'])
 

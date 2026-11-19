@@ -412,8 +412,14 @@ leaves them in. Rows are shown, and a drag is read, in `row_order`: by default t
 primary key, so rows that share a value always come in the same order. Set `row_order` on the view (for
 example `('order', 'name', 'pk')`) to break ties another way.
 
-A drag saves each row whose position changed with `save()`, so `auto_now` fields and signals see it. A handle
-let go where it was saves nothing, and a payload that is not a list of `[position, pk]` pairs is ignored.
+A drag saves each row whose position changed with `save()`, in one transaction, so `auto_now` fields and
+signals see it. A handle let go where it was saves nothing. Positions are whole numbers from 0, saved as sent; a
+payload that is not a list of `[position, pk]` pairs, or has a negative position, is ignored. A sort for a table
+the view does not have raises `BadRequest`.
+
+`reorder(model, order_field, sort_data, order_by=None)` saves a drag outside the view. Pass `order_by` as the
+order the rows were shown in, and a drag that leaves them in that order writes nothing. Without it the shown
+order is not known, so the positions sent are always saved.
 
 Override `can_reorder()` to decide who may drag. When it returns `False` the rows are shown in order with no
 handle column and no dragging, and a sort sent anyway raises `PermissionDenied`. The table is built with the
