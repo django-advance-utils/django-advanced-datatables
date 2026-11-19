@@ -1,46 +1,86 @@
+from django.core.exceptions import PermissionDenied, ValidationError
+
 from django_datatables.datatables import DatatableView, DatatableTable
 
 
-def reorder(model, order_field, sort_data):
-    current_sort = dict(model.objects.filter(id__in=[s[1] for s in sort_data]).values_list('pk', order_field))
-    for s in sort_data:
-        if current_sort[s[1]] != s[0]:
-            o = model.objects.get(id=s[1])
-            setattr(o, order_field, s[0])
-            o.save()
+def reorder(model, order_field, sort_data, order_by=None):
+    """Save the order a drag left the rows in, and return how many rows were written.
+
+    ``sort_data`` is what the table sends after a drag: ``[position, pk]`` for each of its rows, the position
+    being where that row now stands. The rows are read in the order the table showed them (``order_by``, by
+    default the order field and then the primary key, so rows sharing a value always come in the same order);
+    when the positions sent leave them in that same order, nothing moved and nothing is written. Otherwise each
+    row whose value differs from its position is saved with it, through ``save()``, so ``auto_now`` fields and
+    signals see the change.
+
+    A payload that is not a list of ``[position, pk]`` pairs writes nothing and returns 0.
+    """
+    order_by = order_by or (order_field, 'pk')
+    pk_field = model._meta.pk
+    try:
+        positions = {pk_field.to_python(pk): int(position) for position, pk in sort_data}
+    except (TypeError, ValueError, ValidationError):
+        return 0
+
+    rows = model.objects.filter(pk__in=positions).order_by(*order_by)
+    shown = [row.pk for row in rows]
+    wanted = sorted(shown, key=lambda pk: positions[pk])
+    if wanted == shown:
+        return 0
+
+    written = 0
+    for row in rows:
+        position = positions[row.pk]
+        if getattr(row, order_field) != position:
+            setattr(row, order_field, position)
+            row.save()
+            written += 1
+    return written
 
 
 class OrderedDatatable(DatatableTable):
+    """A table whose rows are put in order by dragging them.
 
-    def __init__(self, *args, order_field=None, **kwargs):
+    ``order_field`` is the model field that holds the order. ``row_order`` is the order the rows are shown in,
+    which is also the order a drag is read against: by default the order field and then the primary key, so rows
+    that share a value are always shown, and read, in the same order. Pass ``reorderable=False`` to show the rows
+    in that order with no handles and no dragging.
+    """
+
+    handle_html = '<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>'
+
+    def __init__(self, *args, order_field=None, row_order=None, reorderable=True, **kwargs):
         self.order_field = order_field
+        self.row_order = tuple(row_order) if row_order else (order_field, 'pk')
+        self.reorderable = reorderable
         table_options = {
             'dom': 't',
             'no_col_search': True,
             'no_footer': True,
             'pageLength': 400,
             'stateSave': False,
-            'rowReorder': True,
+            'rowReorder': reorderable,
         }
-        if not kwargs:
-            kwargs = {}
-        if kwargs.get('table_options') is None:
-            kwargs['table_options'] = table_options
-        else:
-            kwargs['table_options'] = table_options.update(kwargs.get('table_options', {}))
+        table_options.update(kwargs.get('table_options') or {})
+        kwargs['table_options'] = table_options
         super().__init__(*args, **kwargs)
         self.table_classes = ['display', 'compact', 'smalltext', 'table-sm', 'table']
-        self.add_columns(
-            '._index',
-            '.pk', ('_handle',  {'title': '', 'column_defs': {'width': '30px', 'className': 'button-cell'}}),
-            check_permissions=False,
-        )
+        columns = ['._index', '.pk']
+        if reorderable:
+            columns.append(('_handle', {'title': '', 'column_defs': {'width': '30px', 'className': 'button-cell'}}))
+        self.add_columns(*columns, check_permissions=False)
+
+    def get_saved_state(self, name):
+        # A drag sends the first two columns of each row as its position and pk, so a saved column order (one
+        # kept for this view from before its table could be reordered) must not move them.
+        return None
 
     def get_query(self, **kwargs):
-        data = super().get_query(**kwargs).order_by(self.order_field)
+        data = super().get_query(**kwargs).order_by(*self.row_order)
+        handle = self.handle_html if self.reorderable else ''
         for i, d in enumerate(data):
             d['index'] = i
-            d['handle'] = '<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>'
+            d['handle'] = handle
         return data
 
     def col_def_str(self):
@@ -52,15 +92,26 @@ class OrderedDatatable(DatatableTable):
 class ReorderDatatableView(DatatableView):
 
     order_field: str
+    row_order = None
+    ordered_table_class = OrderedDatatable
     ajax_commands = ['datatable']
 
+    def can_reorder(self):
+        """Whether this request may drag the rows. When not, the rows are shown in order with no handles, and a
+        sort sent anyway is refused."""
+        return True
+
     def add_sortable_table(self, table_id, order_field, **kwargs):
-        self.tables[table_id] = OrderedDatatable(
-            table_id, table_options=self.table_options, order_field=order_field, **kwargs)
+        kwargs.setdefault('row_order', self.row_order)
+        kwargs.setdefault('reorderable', self.can_reorder())
+        self.tables[table_id] = self.ordered_table_class(
+            table_id, table_options=self.table_options, order_field=order_field, view=self, **kwargs)
 
     def datatable_sort(self, **kwargs):
+        if not self.can_reorder():
+            raise PermissionDenied
         table = self.tables[kwargs['table_id']]
-        reorder(table.model, table.order_field, kwargs['sort'])
+        reorder(table.model, table.order_field, kwargs['sort'], order_by=table.row_order)
         # noinspection PyUnresolvedReferences
         return self.command_response('reload_table', table_id=kwargs['table_id'])
 
