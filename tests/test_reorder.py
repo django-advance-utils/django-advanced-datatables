@@ -109,12 +109,29 @@ def test_a_malformed_payload_writes_nothing():
     assert shown() == ['a', 'b']
 
 
-def test_a_position_outside_the_rows_sent_writes_nothing():
+def test_a_negative_position_writes_nothing():
     a, b = make('a', 'b')
 
-    assert reorder(Stage, 'order', [[2, a.pk], [0, b.pk]]) == 0
     assert reorder(Stage, 'order', [[-1, a.pk], [0, b.pk]]) == 0
     assert list(Stage.objects.values_list('order', flat=True)) == [0, 0]
+
+
+def test_positions_with_a_gap_are_saved_as_sent():
+    # A row taken out of the table without the positions being renumbered leaves a gap.
+    a, b, c = make('a', 'b', 'c')
+
+    reorder(Stage, 'order', [[0, b.pk], [2, a.pk], [3, c.pk]])
+
+    assert list(Stage.objects.order_by('order').values_list('name', 'order')) == [('b', 0), ('a', 2), ('c', 3)]
+
+
+def test_the_order_the_rows_were_shown_in_decides_whether_anything_moved():
+    b, a = make('b', 'a')
+    by_name = ('order', 'name')
+
+    assert reorder(Stage, 'order', sort_data(a, b), order_by=by_name) == 0
+    assert reorder(Stage, 'order', sort_data(b, a), order_by=by_name) == 1
+    assert shown(by_name) == ['b', 'a']
 
 
 def test_a_failed_save_writes_none_of_the_drag(monkeypatch):
@@ -219,13 +236,38 @@ def test_the_view_saves_a_drag():
     assert shown() == ['b', 'a']
 
 
-def test_a_sort_for_another_table_or_with_nothing_sent_is_a_bad_request():
+def test_a_sort_for_a_table_the_view_does_not_have_is_a_bad_request():
     a, b = make('a', 'b')
     v = view()
 
-    with pytest.raises(BadRequest):
-        v.datatable_sort(table_id='other', sort=sort_data(b, a))
+    for table_id in ('other', None, ['stageorder']):
+        with pytest.raises(BadRequest):
+            v.datatable_sort(table_id=table_id, sort=sort_data(b, a))
     with pytest.raises(BadRequest):
         v.datatable_sort(sort=sort_data(b, a))
-    assert v.datatable_sort(table_id='stageorder') == 'reload_table'
     assert shown() == ['a', 'b']
+
+
+def test_a_sort_with_nothing_sent_writes_nothing():
+    make('a', 'b')
+
+    assert view().datatable_sort(table_id='stageorder') == 'reload_table'
+    assert shown() == ['a', 'b']
+
+
+class StageOrderByName(StageOrder):
+    row_order = ('order', 'name')
+
+
+def test_the_view_reads_a_drag_in_its_row_order():
+    b, a = make('b', 'a')
+    v = StageOrderByName()
+    v.request = SimpleNamespace(user=None)
+    v.tables = {}
+    v.add_tables()
+
+    v.datatable_sort(table_id='stageorderbyname', sort=sort_data(a, b))
+    assert list(Stage.objects.values_list('order', flat=True)) == [0, 0]
+
+    v.datatable_sort(table_id='stageorderbyname', sort=sort_data(b, a))
+    assert shown(('order', 'name')) == ['b', 'a']

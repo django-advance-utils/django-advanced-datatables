@@ -1,5 +1,5 @@
 from django.core.exceptions import BadRequest, PermissionDenied, ValidationError
-from django.db import transaction
+from django.db import router, transaction
 
 from django_datatables.datatables import DatatableView, DatatableTable
 
@@ -16,15 +16,15 @@ def reorder(model, order_field, sort_data, order_by=None):
     handle let go where it was. Without it the order the rows were shown in is not known, so the positions are
     always saved.
 
-    A payload that is not a list of ``[position, pk]`` pairs, each position one of ``0`` to one less than the
-    number of rows sent, writes nothing and returns 0.
+    A payload that is not a list of ``[position, pk]`` pairs, each position a whole number of 0 or more, writes
+    nothing and returns 0. Positions are saved as sent, gaps and all.
     """
     pk_field = model._meta.pk
     try:
         positions = {pk_field.to_python(pk): int(position) for position, pk in sort_data}
     except (TypeError, ValueError, OverflowError, ValidationError):
         return 0
-    if any(not 0 <= position < len(sort_data) for position in positions.values()):
+    if any(position < 0 for position in positions.values()):
         return 0
 
     rows = list(model.objects.filter(pk__in=positions).order_by(*(order_by or (order_field, 'pk'))))
@@ -34,7 +34,7 @@ def reorder(model, order_field, sort_data, order_by=None):
             return 0
 
     written = 0
-    with transaction.atomic():
+    with transaction.atomic(using=router.db_for_write(model)):
         for row in rows:
             position = positions[row.pk]
             if getattr(row, order_field) != position:
@@ -116,9 +116,10 @@ class ReorderDatatableView(DatatableView):
     def datatable_sort(self, **kwargs):
         if not self.can_reorder():
             raise PermissionDenied
-        table = self.tables.get(kwargs.get('table_id'))
+        table_id = kwargs.get('table_id')
+        table = self.tables.get(table_id) if isinstance(table_id, str) else None
         if table is None:
-            raise BadRequest
+            raise BadRequest('Unknown table')
         reorder(table.model, table.order_field, kwargs.get('sort'), order_by=table.row_order)
         # noinspection PyUnresolvedReferences
         return self.command_response('reload_table', table_id=kwargs['table_id'])

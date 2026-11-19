@@ -413,9 +413,9 @@ primary key, so rows that share a value always come in the same order. Set `row_
 example `('order', 'name', 'pk')`) to break ties another way.
 
 A drag saves each row whose position changed with `save()`, in one transaction, so `auto_now` fields and
-signals see it. A handle let go where it was saves nothing. A payload that is not a list of `[position, pk]`
-pairs, or has a position outside the rows sent, is ignored; a sort for a table the view does not have raises
-`BadRequest`.
+signals see it. A handle let go where it was saves nothing. Positions are whole numbers from 0, saved as sent; a
+payload that is not a list of `[position, pk]` pairs, or has a negative position, is ignored. A sort for a table
+the view does not have raises `BadRequest`.
 
 `reorder(model, order_field, sort_data, order_by=None)` saves a drag outside the view. Pass `order_by` as the
 order the rows were shown in, and a drag that leaves them in that order writes nothing. Without it the shown
