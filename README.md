@@ -405,6 +405,20 @@ pass `check_permissions=False` to `add_columns`, which a project can do too.
 ajax-advanced-helpers and django-advanced-modals read the same setting, each
 with a `kind` of its own.
 
+### Reordering rows
+
+`ReorderDatatableView` shows a model's rows in the order of its `order_field` and saves the order a drag
+leaves them in. Rows are shown, and a drag is read, in `row_order`: by default the order field and then the
+primary key, so rows that share a value always come in the same order. Set `row_order` on the view (for
+example `('order', 'name', 'pk')`) to break ties another way.
+
+A drag saves each row whose position changed with `save()`, so `auto_now` fields and signals see it. A handle
+let go where it was saves nothing, and a payload that is not a list of `[position, pk]` pairs is ignored.
+
+Override `can_reorder()` to decide who may drag. When it returns `False` the rows are shown in order with no
+handle column and no dragging, and a sort sent anyway raises `PermissionDenied`. The table is built with the
+view, so column permission checks are given its request.
+
 ## Demo Application
 
 A Docker-based demo is included with sample data and 15+ examples covering filters, plugins, editing, rendering, and more.
