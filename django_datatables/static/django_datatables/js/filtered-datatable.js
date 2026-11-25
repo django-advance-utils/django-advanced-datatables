@@ -32,7 +32,7 @@ if (typeof django_datatables === 'undefined') {
         function column_select(button) {
             var table_id = $(button).closest('table').attr('id');
             if(table_id === undefined) {
-                var table = $(button).closest('table').closest('.dataTables_wrapper').find('.dataTables_scrollBody table.display');
+                var table = $(button).closest('table').closest('.dt-container').find('.dt-scroll-body table.display');
                 table_id = table.attr('id');
             }
 
@@ -1057,7 +1057,9 @@ if (typeof django_datatables === 'undefined') {
                 if (tablesetup.tableOptions.ajax_url !== undefined){
                     url = tablesetup.tableOptions.ajax_url
                 } else {
-                    url = window.location.search
+                    // DataTables 2 asks for nothing when the url is empty, as the query string alone is on a
+                    // page without one, where 1.x posted to the page itself.
+                    url = window.location.pathname + window.location.search
                 }
                 if (tablesetup.tableOptions.serverSide) {
                     // Server-side mode: DataTables generates draw/start/length/search/order

@@ -41,7 +41,7 @@ def get_column_header_texts(page: Page, table_selector: str = "table.dataTable")
 
 def get_info_text(page: Page):
     """Return the DataTables info string (e.g. 'Showing 1 to 22 of 94 entries')."""
-    info = page.locator(".dataTables_info")
+    info = page.locator(".dt-info")
     info.wait_for(timeout=10000)
     return info.text_content().strip()
 
@@ -108,7 +108,7 @@ class TestPagination:
 
     def test_pagination_controls_exist(self, page: Page):
         """Verify pagination controls are rendered."""
-        paginate = page.locator(".dataTables_paginate")
+        paginate = page.locator(".dt-paging")
         expect(paginate).to_be_visible()
 
 
