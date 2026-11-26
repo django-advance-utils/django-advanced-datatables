@@ -1065,8 +1065,6 @@ if (typeof django_datatables === 'undefined') {
                 if (tablesetup.tableOptions.ajax_url !== undefined){
                     url = tablesetup.tableOptions.ajax_url
                 } else {
-                    // DataTables 2 asks for nothing when the url is empty, as the query string alone is on a
-                    // page without one, where 1.x posted to the page itself.
                     url = window.location.pathname + window.location.search
                 }
                 if (tablesetup.tableOptions.serverSide) {

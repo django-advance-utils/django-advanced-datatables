@@ -35,9 +35,6 @@
     margin: -5px!important;
 }
 
-/* A scrolling table's cells keep their content in the middle of the row, as on 1.x. DataTables 2.3.8 has this
-   rule in its own stylesheet, but still under its 1.x class (.dataTables_scroll), so it never matches and a
-   page's own top alignment (Bootstrap's .table) wins instead. */
 div.dt-container .dt-scroll div.dt-scroll-body > table > tbody > tr > td,
 div.dt-container .dt-scroll div.dt-scroll-body > table > tbody > tr > th {
     vertical-align: middle;
