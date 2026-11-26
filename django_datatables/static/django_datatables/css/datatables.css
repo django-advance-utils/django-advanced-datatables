@@ -43,6 +43,38 @@ div.dt-container .dt-scroll div.dt-scroll-body > table > tbody > tr > th {
     vertical-align: middle;
 }
 
+div.dt-container > .dt-info {
+    clear: both;
+    float: left;
+    padding-top: .755em;
+}
+
+div.dt-container > .dt-paging {
+    float: right;
+    text-align: right;
+    padding-top: .25em;
+}
+
+div.dt-container::after {
+    visibility: hidden;
+    display: block;
+    content: "";
+    clear: both;
+    height: 0;
+}
+
+@media screen and (max-width: 767px) {
+    div.dt-container > .dt-info,
+    div.dt-container > .dt-paging {
+        float: none;
+        text-align: center;
+    }
+
+    div.dt-container > .dt-paging {
+        margin-top: .5em;
+    }
+}
+
 .cell-div:hover .cell-edit{
     font-size:10px;
     display:inline;
