@@ -738,7 +738,7 @@ if (typeof django_datatables === 'undefined') {
                     }
                 } else {
                     this.convert = function (current, value, meta, row) {
-                        return params.html.replace(params.var, meta.setup.rowId(row))
+                        return params.html.replace(params.var, meta.settings.rowId(row))
                     }
                 }
             },
