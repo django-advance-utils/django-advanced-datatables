@@ -1004,12 +1004,38 @@ if (typeof django_datatables === 'undefined') {
                 store_state(tablesetup.local_storage_key, JSON.stringify(data));
             }
 
+            var sort_by_column_number = function (data) {
+                if (!data || !Array.isArray(data.order)) {
+                    return data;
+                }
+                var columns = tablesetup.tableOptions.columnDefs || [];
+                var saved_sorts = data.order.length;
+                data.order = data.order.filter(function (sort) {
+                    if (!Array.isArray(sort)) {
+                        return false;
+                    }
+                    if (typeof sort[0] === 'string') {
+                        for (var i = 0; i < columns.length; i++) {
+                            if (columns[i].name === sort[0]) {
+                                sort[0] = i;
+                                break;
+                            }
+                        }
+                    }
+                    return Number.isInteger(sort[0]) && sort[0] >= 0 && sort[0] < columns.length;
+                });
+                if (saved_sorts && !data.order.length) {
+                    delete data.order;
+                }
+                return data;
+            }
+
             this.get_key = function (settings) {
                 var data = read_state(tablesetup.local_storage_key);
                 if (data && tablesetup.session_id == data.session_id) {
-                    return data;
+                    return sort_by_column_number(data);
                 }
-                return tablesetup.state ? tablesetup.state: null;
+                return tablesetup.state ? sort_by_column_number(tablesetup.state) : null;
             }
 
             var dataTable_setup = {
