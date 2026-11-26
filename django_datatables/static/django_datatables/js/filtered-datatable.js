@@ -1004,14 +1004,12 @@ if (typeof django_datatables === 'undefined') {
                 store_state(tablesetup.local_storage_key, JSON.stringify(data));
             }
 
-            // DataTables 2 saves a sort on a named column by its name ([["id", "asc"]]) where 1.x saves the
-            // column's number, and 1.x stops setting the table up when it meets a name. So a saved sort is
-            // read back as column numbers, and a sort on a column the table no longer has is dropped.
             var sort_by_column_number = function (data) {
                 if (!data || !Array.isArray(data.order)) {
                     return data;
                 }
                 var columns = tablesetup.tableOptions.columnDefs || [];
+                var saved_sorts = data.order.length;
                 data.order = data.order.filter(function (sort) {
                     if (!Array.isArray(sort)) {
                         return false;
@@ -1026,6 +1024,9 @@ if (typeof django_datatables === 'undefined') {
                     }
                     return Number.isInteger(sort[0]) && sort[0] >= 0 && sort[0] < columns.length;
                 });
+                if (saved_sorts && !data.order.length) {
+                    delete data.order;
+                }
                 return data;
             }
 
