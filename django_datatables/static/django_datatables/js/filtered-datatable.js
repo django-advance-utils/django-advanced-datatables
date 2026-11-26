@@ -1029,12 +1029,20 @@ if (typeof django_datatables === 'undefined') {
                 return data;
             }
 
+            var state_for_these_columns = function (data) {
+                var columns = tablesetup.tableOptions.columnDefs || [];
+                if (data && Array.isArray(data.columns) && data.columns.length !== columns.length) {
+                    return null;
+                }
+                return sort_by_column_number(data);
+            }
+
             this.get_key = function (settings) {
                 var data = read_state(tablesetup.local_storage_key);
                 if (data && tablesetup.session_id == data.session_id) {
-                    return sort_by_column_number(data);
+                    return state_for_these_columns(data);
                 }
-                return tablesetup.state ? sort_by_column_number(tablesetup.state) : null;
+                return tablesetup.state ? state_for_these_columns(tablesetup.state) : null;
             }
 
             var dataTable_setup = {
