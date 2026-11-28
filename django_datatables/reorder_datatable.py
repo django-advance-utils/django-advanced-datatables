@@ -1,7 +1,11 @@
 from django.core.exceptions import BadRequest, PermissionDenied, ValidationError
 from django.db import router, transaction
+from django.utils.safestring import mark_safe
 
 from django_datatables.datatables import DatatableView, DatatableTable
+
+# Markup, so marked safe: a table that escapes its cells for the page leaves it as it is.
+REORDER_HANDLE = mark_safe('<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>')
 
 
 def reorder(model, order_field, sort_data, order_by=None):
@@ -53,7 +57,8 @@ class OrderedDatatable(DatatableTable):
     in that order with no handles and no dragging.
     """
 
-    handle_html = '<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>'
+    # Markup, marked safe where it is used: a table escaping its cells for the page leaves it as it is.
+    handle_html = REORDER_HANDLE
 
     def __init__(self, *args, order_field=None, row_order=None, reorderable=True, **kwargs):
         self.order_field = order_field
@@ -83,7 +88,7 @@ class OrderedDatatable(DatatableTable):
 
     def get_query(self, **kwargs):
         data = super().get_query(**kwargs).order_by(*self.row_order)
-        handle = self.handle_html if self.reorderable else ''
+        handle = mark_safe(self.handle_html) if self.reorderable else ''
         for i, d in enumerate(data):
             d['index'] = i
             d['handle'] = handle

@@ -15,6 +15,7 @@ from django_datatables.constants import HIDE_OPTIONAL, HIDE_VISIBILITY
 from django_datatables.helpers import convert_to_q
 from django_datatables.datatables.column_initialiser import ColumnInitialisor
 from django_datatables.datatables.datatable_error import DatatableError, RefusedColumnError
+from django_datatables.escaping import escape_cells_setting, page_cell
 from django_datatables.filters import DatatableFilter
 from django_datatables.models import SavedState
 from django_datatables.permissions import is_permitted
@@ -36,6 +37,9 @@ class DatatableTable:
     edit_options = {}
     edit_fields = []
     query_manager = 'objects'
+    # Whether this table escapes its cells for the page (see django_datatables.escaping). None follows the
+    # DATATABLES_ESCAPE_CELLS setting; True or False decides for this table alone.
+    escape_cells = None
 
     def __init__(self, table_id=None, model=None, table_options=None, table_classes=None, view=None, **kwargs):
         self.columns = []
@@ -370,9 +374,9 @@ class DatatableTable:
         options = dict(self.table_options)
         request = getattr(self.view, 'request', None)
         if self.table_data is not None:
-            options['data'] = self.get_table_array(request, self.table_data)
+            options['data'] = self.get_page_array(request, self.table_data)
         elif not self.ajax_data:
-            options['data'] = self.get_table_array(request, self.get_query())
+            options['data'] = self.get_page_array(request, self.get_query())
         elif request is not None:
             # Pin the draw url to the request that rendered the table. Without it the js falls back
             # to window.location, so a draw that fires after the browser has navigated posts this
@@ -383,9 +387,12 @@ class DatatableTable:
                                  for i, c in enumerate(self.columns)]
         table_vars = {
             'field_ids': self.all_names(),
-            'colOptions': [c.options for c in self.columns],
+            'colOptions': [self.page_options(c) for c in self.columns],
             'tableOptions': options,
             'local_storage_key': self.local_storage_key,
+            # The page's own scripts read a cell back as text -- the in-place editor fills its input from one --
+            # so they need to know whether the cells reach them escaped.
+            'escape_cells': self.escapes_cells(),
         }
         if self.session_or_default:
             table_vars['state'] = self.session_or_default_state()
@@ -451,8 +458,38 @@ class DatatableTable:
                 pass
         return results_list
 
+    def escapes_cells(self):
+        """Whether this table escapes its cells for the page: its own ``escape_cells``, or the setting."""
+        return escape_cells_setting() if self.escape_cells is None else bool(self.escape_cells)
+
+    def page_rows(self, rows):
+        """``rows`` as the page gets them. While the table escapes its cells, each cell's text is escaped unless
+        it is marked safe or its column opts out (``page_escape = False``); otherwise they are as they were."""
+        if not self.escapes_cells():
+            return rows
+        return [[cell if column.page_escape is False else column.page_value(cell)
+                 for cell, column in zip(row, self.columns)] for row in rows]
+
+    def page_options(self, column):
+        """A column's options as the page gets them. A lookup is ``[key, label]`` pairs the page's ``ReplaceLookup``
+        writes a label of into markup, found by matching its key against the cell. So while the table escapes its
+        cells, each label is escaped unless it is marked safe, and each key the way the column's cells are, so a
+        lookup keyed by stored text still matches them. A column that opts out (``page_escape = False``) keeps
+        both as they are, as it keeps its cells. ``column.options`` itself is left as it is."""
+        options = column.options
+        lookup = options.get('lookup')
+        if not lookup or column.page_escape is False or not self.escapes_cells():
+            return options
+        return {**options, 'lookup': [[column.page_value(entry[0]), page_cell(entry[1]), *entry[2:]]
+                                      for entry in lookup]}
+
+    def get_page_array(self, request, results):
+        """``get_table_array`` for the page: what every writer of rows for the page sends. Anything that is
+        not a page -- a download, the clipboard, a spreadsheet -- reads ``get_table_array``."""
+        return self.page_rows(self.get_table_array(request, results))
+
     def get_json(self, request, results):
-        return_data = {'data': self.get_table_array(request, results)}
+        return_data = {'data': self.get_page_array(request, results)}
         if self.ajax_commands:
             return_data['ajax_commands'] = self.ajax_commands
         return json.dumps(return_data, separators=(',', ':'), default=str)
@@ -461,7 +498,7 @@ class DatatableTable:
         id_column = self.setup_column_id()
         if id_column:
             self.filter[id_column.field] = int(row_id[1:])
-            results = self.get_table_array(request, self.get_query())[0]
+            results = self.get_page_array(request, self.get_query())[0]
             return {'function': 'refresh_row', 'row_no': row_id, 'data': results, 'table_id': self.table_id}
 
     def refresh_row(self, request, row_id):
@@ -492,8 +529,10 @@ class DatatableTable:
                 for start in range(0, len(ids), self.REFRESH_BATCH_SIZE):
                     batch = ids[start:start + self.REFRESH_BATCH_SIZE]
                     self.filter = convert_to_q(table_filter) & models.Q(**{f'{id_column.field}__in': batch})
-                    for row in self.get_table_array(request, self.get_query()):
-                        rows[f'i{row[column_id]}'] = row
+                    table_rows = self.get_table_array(request, self.get_query())
+                    # Keyed by the id as read; the page gets the row as it gets any other.
+                    for row, page_row in zip(table_rows, self.page_rows(table_rows)):
+                        rows[f'i{row[column_id]}'] = page_row
             finally:
                 self.filter, self.max_records = table_filter, max_records
         return {'function': 'refresh_rows', 'table_id': self.table_id, 'rows': rows}
@@ -581,7 +620,7 @@ class HorizontalTable(DatatableTable):
 
     def model_table_setup(self):
         return mark_safe(json.dumps({'initsetup': json.loads(self.col_def_str()),
-                                     'data': self.get_table_array(self.kwargs.get('request'), self.get_query()),
+                                     'data': self.get_page_array(self.kwargs.get('request'), self.get_query()),
                                      'row_titles': self.all_titles(),
                                      'table_id': self.table_id,
                                      }))
