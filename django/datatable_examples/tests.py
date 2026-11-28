@@ -463,6 +463,35 @@ class TestServerSideViewAttribute(TestCase):
         self.assertNotIsInstance(view.tables['client_table'], ServerSideTable)
 
 
+class TestTableWaitsForDataTables(TestCase):
+    """The table is drawn hidden until DataTables builds it, so its header and footer rows never show unstyled, one
+    under the other, while the page waits for the script that builds it."""
+
+    def test_the_table_is_drawn_pending(self):
+        class ClientView(DatatableView):
+            model = Person
+
+            def setup_table(self, table):
+                table.add_columns('id', 'first_name')
+
+        view = ClientView()
+        view.request = RequestFactory().get('/')
+        view.add_tables()
+        view.setup_table(view.tables['clientview'])
+        html = view.tables['clientview'].render()
+        tag = html[html.index('<table id="clientview"'):]
+        self.assertIn('datatable-pending', tag[:tag.index('>')])
+
+    def test_the_stylesheet_hides_only_a_table_still_waiting(self):
+        from pathlib import Path
+
+        import django_datatables
+
+        css = (Path(django_datatables.__file__).parent / 'static/django_datatables/css/datatables.css').read_text()
+        rule = css[css.index('table.datatable-pending:not(.dataTable)'):]
+        self.assertIn('visibility: hidden', rule[:rule.index('}')])
+
+
 class TestBaseQuerysetHook(TestCase):
     """base_queryset() lets a table start from an annotated queryset whose annotations then
     behave as plain fields: in the row data, for ordering, and for the server-side filters."""

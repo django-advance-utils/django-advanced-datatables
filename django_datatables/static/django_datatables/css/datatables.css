@@ -302,3 +302,11 @@ div.dt-container::after {
 .side-filter a:hover {
     text-decoration: none;
 }
+
+/* A table the page has drawn but DataTables has not built yet. Until its script runs, the browser shows the
+   header row and the footer row one under the other, unstyled. DataTables adds `dataTable` as it builds the
+   table, and the copies it makes for a scrolling header and footer copy both classes, so only a table still
+   waiting is hidden. Hidden, not removed: it keeps its space, so nothing moves when it appears. */
+table.datatable-pending:not(.dataTable) {
+    visibility: hidden;
+}
