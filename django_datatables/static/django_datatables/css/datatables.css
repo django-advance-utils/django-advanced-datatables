@@ -310,3 +310,51 @@ div.dt-container::after {
 table.datatable-pending:not(.dataTable) {
     visibility: hidden;
 }
+
+/* While a table waits to be built, a message straight before it says so. It shows only while the table after it is
+   still pending: DataTables puts its own container in the table's place as it builds it, so the message goes by
+   itself. It takes no space of its own and sits over the space the hidden table keeps, so nothing moves when the
+   table appears. A browser without :has() shows no message, as before. */
+.datatable-loading {
+    display: none;
+}
+
+.datatable-loading:has(+ table.datatable-pending:not(.dataTable)) {
+    display: block;
+    position: relative;
+    height: 0;
+    z-index: 1;
+}
+
+.datatable-loading-message {
+    position: absolute;
+    top: 0.75rem;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    opacity: 0.7;
+}
+
+.datatable-loading-spinner {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: datatable-loading-spin 0.75s linear infinite;
+}
+
+@keyframes datatable-loading-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .datatable-loading-spinner {
+        animation-duration: 2s;
+    }
+}

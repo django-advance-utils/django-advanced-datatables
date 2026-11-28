@@ -1,5 +1,6 @@
-{% spaceless %}
+{% load i18n %}{% spaceless %}
     <div id="{{ datatable.table_id }}-above"></div>
+    <div class="datatable-loading" role="status"><div class="datatable-loading-message"><span class="datatable-loading-spinner" aria-hidden="true"></span>{% translate 'Loading' %}&hellip;</div></div>
     <table id="{{ datatable.table_id }}" class="{{ datatable.table_class }} datatable-pending" data-url="{{ request.path }}">
         <thead>
         <tr{% if datatable.table_options.no_titles %} class="d-none"{% endif %}>
