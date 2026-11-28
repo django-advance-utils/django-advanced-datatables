@@ -463,6 +463,48 @@ class TestServerSideViewAttribute(TestCase):
         self.assertNotIsInstance(view.tables['client_table'], ServerSideTable)
 
 
+class TestTableWaitsForDataTables(TestCase):
+    """The table is drawn hidden until DataTables builds it, so its header and footer rows never show unstyled, one
+    under the other, while the page waits for the script that builds it."""
+
+    def test_the_table_is_drawn_pending(self):
+        class ClientView(DatatableView):
+            model = Person
+
+            def setup_table(self, table):
+                table.add_columns('id', 'first_name')
+
+        view = ClientView()
+        view.request = RequestFactory().get('/')
+        view.add_tables()
+        view.setup_table(view.tables['clientview'])
+        html = view.tables['clientview'].render()
+        tag = html[html.index('<table id="clientview"'):]
+        self.assertIn('datatable-pending', tag[:tag.index('>')])
+        # The loading message is the element straight before it, which is what its stylesheet rule keys on.
+        loading = html[:html.index('<table id="clientview"')]
+        self.assertTrue(loading.endswith('Loading&hellip;</div></div>'), loading[-200:])
+        self.assertIn('<div class="datatable-loading" role="status">', loading[-300:])
+
+    def test_the_stylesheet_hides_only_a_table_still_waiting(self):
+        from pathlib import Path
+
+        import django_datatables
+
+        css = (Path(django_datatables.__file__).parent / 'static/django_datatables/css/datatables.css').read_text()
+        rule = css[css.index('table.datatable-pending:not(.dataTable) {'):]
+        self.assertIn('visibility: hidden', rule[:rule.index('}')])
+
+    def test_the_loading_message_shows_only_before_a_pending_table(self):
+        from pathlib import Path
+
+        import django_datatables
+
+        css = (Path(django_datatables.__file__).parent / 'static/django_datatables/css/datatables.css').read_text()
+        self.assertIn('.datatable-loading {\n    display: none;', css)
+        self.assertIn('.datatable-loading:has(+ table.datatable-pending:not(.dataTable)) {', css)
+
+
 class TestBaseQuerysetHook(TestCase):
     """base_queryset() lets a table start from an annotated queryset whose annotations then
     behave as plain fields: in the row data, for ordering, and for the server-side filters."""
