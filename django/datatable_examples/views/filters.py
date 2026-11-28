@@ -1,4 +1,5 @@
 from django.db.models import Count
+from django.utils.html import format_html
 from django.forms.fields import CharField
 
 from datatable_examples import models
@@ -117,8 +118,9 @@ class CollapseButton(DatatableColumn):
         self.options['render'] = [
             {'var': '%1%', 'html': '%1%', 'function': 'ReplaceLookup'},
         ]
-        self.options['lookup'] = (('+', self.expand_button.format(self.plus)),
-                                  ('-', self.expand_button.format(self.minus)),
+        # format_html, so the buttons are marked safe and survive DATATABLES_ESCAPE_CELLS.
+        self.options['lookup'] = (('+', format_html(self.expand_button, self.plus)),
+                                  ('-', format_html(self.expand_button, self.minus)),
                                   (' ', ' '))
         self.options['no_col_search'] = True
         self.title = ''

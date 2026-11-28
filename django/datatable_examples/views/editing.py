@@ -1,5 +1,7 @@
 import json
 
+from django.utils.safestring import mark_safe
+
 from datatable_examples import models
 from datatable_examples.views.base import ManualPage
 from django_datatables.columns import ColumnBase, DatatableColumn, DateColumn, ManyToManyColumn
@@ -11,8 +13,9 @@ class NumberEdit(DatatableColumn):
     """A column rendered as a number input; the value posts back on blur."""
 
     def row_result(self, data_dict, _page_results):
-        return ('<form><input style="text-align:right" type="number" name="count" '
-                'onblur=django_datatables.b_r(this) ></form>')
+        # Markup the code builds, so marked safe: with DATATABLES_ESCAPE_CELLS on, a plain string is escaped.
+        return mark_safe('<form><input style="text-align:right" type="number" name="count" '
+                         'onblur=django_datatables.b_r(this) ></form>')
 
 
 class InlineEditing(ManualPage, DatatableView):
