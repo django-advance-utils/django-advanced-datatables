@@ -1528,6 +1528,12 @@ class TestPageCell(TestCase):
         self.assertEqual([7, ESCAPED], page_cell((7, MARKUP)))
 
 
+class OwnHandle(OrderedDatatable):
+    """A reorder table with a handle of its own, given as a plain string."""
+
+    handle_html = '<i class="own-handle"></i>'
+
+
 class SafeNameColumn(DatatableColumn):
     """A column building markup round a name, as a column should: format_html escapes the name and marks the rest."""
 
@@ -1650,6 +1656,13 @@ class TestWhatEscapingLeavesAlone(EscapingTableTestCase):
         rows = [self.row_cells(table, row) for row in table.get_page_array(self.request, table.get_query())]
         self.assertIn('<i class="btn btn-sm btn-outline-secondary fas fa-arrows-alt-v"></i>', rows[0].values())
         self.assertEqual([ESCAPED], [row['name'] for row in rows])
+
+    def test_a_subclass_handle_stays_markup(self):
+        """A subclass's own handle_html, given as a plain string, is marked safe where the rows use it."""
+        table = OwnHandle('ordered', model=Company, order_field='order')
+        table.add_columns('name')
+        rows = [self.row_cells(table, row) for row in table.get_page_array(self.request, table.get_query())]
+        self.assertIn('<i class="own-handle"></i>', rows[0].values())
 
     def test_the_column_visibility_modals_handle_checkbox_and_titles(self):
         """A title is written into the table's header as html -- SelectColumn's is two buttons -- so the modal
