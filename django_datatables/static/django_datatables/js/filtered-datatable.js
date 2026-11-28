@@ -32,7 +32,7 @@ if (typeof django_datatables === 'undefined') {
         function column_select(button) {
             var table_id = $(button).closest('table').attr('id');
             if(table_id === undefined) {
-                var table = $(button).closest('table').closest('.dataTables_wrapper').find('.dataTables_scrollBody table.display');
+                var table = $(button).closest('table').closest('.dt-container').find('.dt-scroll-body table.display');
                 table_id = table.attr('id');
             }
 
@@ -774,7 +774,7 @@ if (typeof django_datatables === 'undefined') {
                     }
                 } else {
                     this.convert = function (current, value, meta, row) {
-                        return params.html.replace(params.var, meta.setup.rowId(row))
+                        return params.html.replace(params.var, meta.settings.rowId(row))
                     }
                 }
             },
@@ -1040,12 +1040,46 @@ if (typeof django_datatables === 'undefined') {
                 store_state(tablesetup.local_storage_key, JSON.stringify(data));
             }
 
+            var sort_by_column_number = function (data) {
+                if (!data || !Array.isArray(data.order)) {
+                    return data;
+                }
+                var columns = tablesetup.tableOptions.columnDefs || [];
+                var saved_sorts = data.order.length;
+                data.order = data.order.filter(function (sort) {
+                    if (!Array.isArray(sort)) {
+                        return false;
+                    }
+                    if (typeof sort[0] === 'string') {
+                        for (var i = 0; i < columns.length; i++) {
+                            if (columns[i].name === sort[0]) {
+                                sort[0] = i;
+                                break;
+                            }
+                        }
+                    }
+                    return Number.isInteger(sort[0]) && sort[0] >= 0 && sort[0] < columns.length;
+                });
+                if (saved_sorts && !data.order.length) {
+                    delete data.order;
+                }
+                return data;
+            }
+
+            var state_for_these_columns = function (data) {
+                var columns = tablesetup.tableOptions.columnDefs || [];
+                if (data && Array.isArray(data.columns) && data.columns.length !== columns.length) {
+                    return null;
+                }
+                return sort_by_column_number(data);
+            }
+
             this.get_key = function (settings) {
                 var data = read_state(tablesetup.local_storage_key);
                 if (data && tablesetup.session_id == data.session_id) {
-                    return data;
+                    return state_for_these_columns(data);
                 }
-                return tablesetup.state ? tablesetup.state: null;
+                return tablesetup.state ? state_for_these_columns(tablesetup.state) : null;
             }
 
             var dataTable_setup = {
@@ -1068,7 +1102,7 @@ if (typeof django_datatables === 'undefined') {
                 if (tablesetup.tableOptions.ajax_url !== undefined){
                     url = tablesetup.tableOptions.ajax_url
                 } else {
-                    url = window.location.search
+                    url = window.location.pathname + window.location.search
                 }
                 if (tablesetup.tableOptions.serverSide) {
                     // Server-side mode: DataTables generates draw/start/length/search/order
